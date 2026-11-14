@@ -42,6 +42,9 @@ input[type=text],input[type=number],select{display:block;width:100%;margin-top:4
 .trip{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line)}
 .trip:first-of-type{border-top:0}
 .trip b{font-size:17px}
+.trip>:first-child{min-width:0;flex:1}
+.acts{display:flex;gap:8px;flex:none;align-items:center}
+.acts .btn{white-space:nowrap}
 .bar{height:8px;background:var(--bg);border-radius:9px;overflow:hidden;margin:10px 0 18px}
 .bar i{display:block;height:100%;background:var(--pine);transition:width .25s}
 .cat{margin-bottom:16px}.cat h3{font-size:17px;margin-bottom:6px;color:var(--pine)}
@@ -50,7 +53,7 @@ input[type=text],input[type=number],select{display:block;width:100%;margin-top:4
 .li .q{margin-left:auto;font-weight:600;background:var(--bg);border-radius:8px;padding:1px 10px;min-width:36px;text-align:center}
 .li.done span{text-decoration:line-through;color:var(--mute)}
 .item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
-.item .t{flex:1}.item small{display:block;color:var(--mute)}
+.item .t{flex:1;min-width:0}.item small{display:block;color:var(--mute)}
 .x{color:var(--danger)}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 </style>
@@ -125,7 +128,7 @@ function tripsView(){
  <section class="panel"><h2>Your trips</h2>${S.trips.length?S.trips.map(t=>{
   const n=t.list.length,c=t.list.filter(x=>t.checked[x.id]).length;
   return `<div class="trip"><div><b>${esc(t.name||'Untitled trip')}</b><div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c}/${n} packed</div></div>
-  <div><button class="btn sm" data-act="open" data-v="${t.id}">Open</button> <button class="btn sm ghost x" data-act="deltrip" data-v="${t.id}" aria-label="Delete trip">Delete</button></div></div>`}).join(''):'<p class="hint">No trips yet. Plan one above and your list appears here.</p>'}</section>`}
+  <div class="acts"><button class="btn sm" data-act="open" data-v="${t.id}">Open</button><button class="btn sm ghost x" data-act="deltrip" data-v="${t.id}" aria-label="Delete trip">Delete</button></div></div>`}).join(''):'<p class="hint">No trips yet. Plan one above and your list appears here.</p>'}</section>`}
 
 function tripForm(){
  const e=ui.tripEdit;if(!e)return '';
@@ -167,7 +170,7 @@ function itemsView(){
  const cats=group(S.items.map(i=>({...i,cat:i.cat||'Other'})));
  return form+`<section class="panel"><div class="top"><h2>My items</h2><button class="btn sun sm" data-act="new">Add item</button></div>
  ${cats.map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(i=>`<div class="item"><div class="t"><b>${esc(i.name)}</b><small>${esc(describe(i))}</small></div>
- <button class="btn sm ghost" data-act="edit" data-v="${i.id}">Edit</button><button class="btn sm ghost x" data-act="delitem" data-v="${i.id}" aria-label="Delete ${esc(i.name)}">Delete</button></div>`).join('')}</div>`).join('')||'<p class="hint">No items yet. Add the things you always or sometimes pack.</p>'}</section>
+ <div class="acts"><button class="btn sm ghost" data-act="edit" data-v="${i.id}">Edit</button><button class="btn sm ghost x" data-act="delitem" data-v="${i.id}" aria-label="Delete ${esc(i.name)}">Delete</button></div></div>`).join('')}</div>`).join('')||'<p class="hint">No items yet. Add the things you always or sometimes pack.</p>'}</section>
  <section class="panel"><h2>Trip types</h2><div class="chips">${S.tags.map(g=>`<button class="chip" data-act="deltag" data-v="${esc(g)}" title="Remove ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>
  <div class="row"><input type="text" id="nt" placeholder="e.g. Camping" style="margin:0"><button class="btn" data-act="addtag" style="flex:0 0 auto">Add type</button></div></section>`}
 
