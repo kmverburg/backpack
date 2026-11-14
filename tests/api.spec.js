@@ -1,10 +1,10 @@
 const { test, expect, H } = require('./helpers');
 
-test('refuses /api/state without the login header', async ({ playwright, baseURL }) => {
-  const bare = await playwright.request.newContext({ baseURL });
-  expect((await bare.get('/api/state')).status()).toBe(403);
-  expect((await bare.put('/api/state', { data: { rev: 0, data: {} } })).status()).toBe(403);
-  await bare.dispose();
+test('refuses /api/state without the login header', async ({ baseURL }) => {
+  // Node fetch sends no extra headers, unlike the configured request context.
+  expect((await fetch(baseURL + '/api/state')).status).toBe(403);
+  const put = await fetch(baseURL + '/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rev: 0, data: {} }) });
+  expect(put.status).toBe(403);
 });
 
 test('reads and saves state', async ({ request, api }) => {

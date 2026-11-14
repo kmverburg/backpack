@@ -4,3 +4,5 @@ node_modules
 mobile/android
 *.jks
 *.keystore
+test-results/
+playwright-report/
