@@ -100,7 +100,7 @@ const ui={tab:'trips',open:null,draft:{name:'',days:7,tags:[]},edit:null,tripEdi
 const qtyFor=(it,d)=>{let q=it.mode==='fixed'?it.qty:it.qty*Math.ceil(d/Math.max(1,it.every));return it.mode==='per'&&it.cap>0?Math.min(q,it.cap):q};
 const describe=it=>{
  let r=it.mode==='fixed'?`${it.qty} per trip`:`${it.qty} per ${it.every>1?it.every+' days':'day'}${it.cap>0?`, max ${it.cap}`:''}`;
- return r+' · '+(it.tags.length?'only on '+it.tags.join(', '):'every trip')};
+ return r+' · '+(it.tags.length?'only on '+it.tags.join(', '):'every trip')+(it.minDays>0?' · only trips longer than '+it.minDays+' days':'')};
 const sentence=it=>{
  const q=Math.max(1,+it.qty||1);
  if(it.mode==='fixed')return `Pack <b>${q}</b> on every trip, however long it is.`;
@@ -108,7 +108,7 @@ const sentence=it=>{
  const per=ev>1?`${ev} days`:'day';
  const ex=d=>qtyFor({...it,qty:q,every:ev,cap},d);
  return `Pack <b>${q} per ${per}</b>, ${cap>0?`with a maximum of <b>${cap}</b>`:'with <b>no maximum</b>'}. A 7-day trip gets ${ex(7)}, a 14-day trip gets ${ex(14)}.`};
-const gen=t=>S.items.filter(it=>!it.tags.length||it.tags.some(g=>t.tags.includes(g)))
+const gen=t=>S.items.filter(it=>(!it.tags.length||it.tags.some(g=>t.tags.includes(g)))&&!(it.minDays>0&&t.days<=it.minDays))
  .map(it=>({id:it.id,name:it.name,cat:it.cat||'Other',qty:qtyFor(it,t.days)}));
 const group=list=>{const m={};list.forEach(x=>(m[x.cat]=m[x.cat]||[]).push(x));return Object.entries(m)};
 
@@ -162,6 +162,7 @@ function itemsView(){
  <div class="chips"><button class="chip" data-act="etag" data-v="" aria-pressed="${!e.tags.length}">Every trip</button>
  ${S.tags.map(g=>`<button class="chip" data-act="etag" data-v="${esc(g)}" aria-pressed="${e.tags.includes(g)}">${esc(g)}</button>`).join('')}</div>
  <p class="hint" style="margin-top:-6px">Pick one or more trip types, or leave on every trip.</p>
+ <label class="f">Only on trips longer than (days, 0 = any length)<input type="number" id="imd" min="0" value="${+e.minDays||0}"></label>
  <button class="btn" data-act="saveitem">Save item</button> <button class="btn ghost" data-act="cancel">Cancel</button></section>`:'';
  const cats=group(S.items.map(i=>({...i,cat:i.cat||'Other'})));
  return form+`<section class="panel"><div class="top"><h2>My items</h2><button class="btn sun sm" data-act="new">Add item</button></div>
@@ -180,7 +181,8 @@ const grab=()=>{ // keep typed values before re-render
  if(ui.tripEdit&&document.getElementById('en')){ui.tripEdit.name=val('en');ui.tripEdit.days=Math.max(1,Math.min(365,+val('ed')||1))}
  if(ui.tab==='trips'&&!ui.open){ui.draft.name=val('tn');ui.draft.days=Math.max(1,+val('td')||1)}
  if(ui.tab==='items'&&ui.edit&&document.getElementById('in')){const e=ui.edit;e.name=val('in');e.cat=val('ic');e.mode=val('im');e.qty=Math.max(1,+val('iq')||1);
-  if(e.mode==='per'){e.every=Math.max(1,+val('ie')||1);e.cap=Math.max(0,+val('ix')||0)}}
+  if(e.mode==='per'){e.every=Math.max(1,+val('ie')||1);e.cap=Math.max(0,+val('ix')||0)}
+  e.minDays=Math.max(0,Math.floor(+val('imd')||0))}
 };
 const toggle=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 
@@ -207,7 +209,7 @@ document.addEventListener('click',ev=>{
  else if(act==='refresh'&&trip){trip.list=gen(trip)}
  else if(act==='copy'&&trip){const txt=trip.name+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
   try{navigator.clipboard.writeText(txt);b.textContent='Copied'}catch(e){b.textContent='Copy failed'};return}
- else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,tags:[]};
+ else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,minDays:0,tags:[]};
  else if(act==='edit')ui.edit={...S.items.find(i=>i.id===v),tags:[...S.items.find(i=>i.id===v).tags]};
  else if(act==='etag')ui.edit.tags=v===''?[]:toggle(ui.edit.tags,v);
  else if(act==='cancel')ui.edit=null;
