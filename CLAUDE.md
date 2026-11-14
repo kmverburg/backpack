@@ -10,7 +10,7 @@ Shared packing lists for two people (Koen and his partner). You plan a trip (nam
 
 ## Commands
 - Install: nothing to install for the app itself.
-- Install test tools (once): `npm install` (dev-only: Playwright Test and wrangler), then `npx playwright install chromium`.
+- Install test tools (once): `npm ci` (dev-only: Playwright Test and wrangler; use `npm ci`, not `npm install`, so `package-lock.json` doesn't change), then `npx playwright install chromium`.
 - Test: `npm test`. Starts `wrangler dev` itself on port 8788 with a throwaway local KV store (no Cloudflare login) and runs the API and Chromium tests in `tests/`. Each test resets state to empty first.
 - Lint/syntax check: `node --check src/worker.js`
 - Build: none. Deploy happens automatically on push to `main` (`.github/workflows/deploy.yml`).
