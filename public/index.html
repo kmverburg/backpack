@@ -96,7 +96,7 @@ async function push(){
  catch(e){dirty=false;setStatus('Cannot reach the server. Changes are not saved.')}
 }
 const save=()=>{dirty=true;clearTimeout(timer);timer=setTimeout(push,300)};
-const ui={tab:'trips',open:null,draft:{name:'',days:7,tags:[]},edit:null};
+const ui={tab:'trips',open:null,draft:{name:'',days:7,tags:[]},edit:null,tripEdit:null};
 const qtyFor=(it,d)=>{let q=it.mode==='fixed'?it.qty:it.qty*Math.ceil(d/Math.max(1,it.every));return it.mode==='per'&&it.cap>0?Math.min(q,it.cap):q};
 const describe=it=>{
  let r=it.mode==='fixed'?`${it.qty} per trip`:`${it.qty} per ${it.every>1?it.every+' days':'day'}${it.cap>0?`, max ${it.cap}`:''}`;
@@ -127,11 +127,21 @@ function tripsView(){
   return `<div class="trip"><div><b>${esc(t.name||'Untitled trip')}</b><div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c}/${n} packed</div></div>
   <div><button class="btn sm" data-act="open" data-v="${t.id}">Open</button> <button class="btn sm ghost x" data-act="deltrip" data-v="${t.id}" aria-label="Delete trip">Delete</button></div></div>`}).join(''):'<p class="hint">No trips yet. Plan one above and your list appears here.</p>'}</section>`}
 
+function tripForm(){
+ const e=ui.tripEdit;if(!e)return '';
+ return `<section class="panel"><h2>Edit trip</h2>
+ <div class="row"><label class="f">Trip name<input type="text" id="en" value="${esc(e.name)}" placeholder="Lisbon, June"></label>
+ <label class="f">Days<input type="number" id="ed" min="1" max="365" value="${e.days}"></label></div>
+ <div class="f" style="margin-bottom:0">What kind of trip?</div>
+ <div class="chips">${S.tags.map(g=>`<button class="chip" data-act="ttag" data-v="${esc(g)}" aria-pressed="${e.tags.includes(g)}">${esc(g)}</button>`).join('')||'<span class="hint">Add trip types under My items.</span>'}</div>
+ <p class="hint">Saving rebuilds the packlist from your items. Packed ticks are kept for items that stay.</p>
+ <button class="btn" data-act="savetrip">Save trip</button> <button class="btn ghost" data-act="canceltrip">Cancel</button></section>`}
+
 function listView(t){
  const n=t.list.length,c=t.list.filter(x=>t.checked[x.id]).length;
  return `<div class="top"><button class="btn sm ghost" data-act="back">Back</button>
- <div><button class="btn sm ghost" data-act="refresh">Update from items</button> <button class="btn sm ghost" data-act="copy">Copy list</button></div></div>
- <section class="panel"><h2>${esc(t.name||'Untitled trip')}</h2>
+ <div><button class="btn sm ghost" data-act="edittrip">Edit trip</button> <button class="btn sm ghost" data-act="refresh">Update from items</button> <button class="btn sm ghost" data-act="copy">Copy list</button></div></div>
+ ${tripForm()}<section class="panel"><h2>${esc(t.name||'Untitled trip')}</h2>
  <div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c} of ${n} packed</div>
  <div class="bar"><i style="width:${n?c/n*100:0}%"></i></div>
  ${group(t.list).map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(x=>`<label class="li ${t.checked[x.id]?'done':''}"><input type="checkbox" data-act="chk" data-v="${x.id}" ${t.checked[x.id]?'checked':''}><span>${esc(x.name)}</span><b class="q">${x.qty}×</b></label>`).join('')}</div>`).join('')||'<p class="hint">Nothing matches this trip.</p>'}
@@ -167,6 +177,7 @@ function render(){
 }
 const val=id=>{const e=document.getElementById(id);return e?e.value:''};
 const grab=()=>{ // keep typed values before re-render
+ if(ui.tripEdit&&document.getElementById('en')){ui.tripEdit.name=val('en');ui.tripEdit.days=Math.max(1,Math.min(365,+val('ed')||1))}
  if(ui.tab==='trips'&&!ui.open){ui.draft.name=val('tn');ui.draft.days=Math.max(1,+val('td')||1)}
  if(ui.tab==='items'&&ui.edit&&document.getElementById('in')){const e=ui.edit;e.name=val('in');e.cat=val('ic');e.mode=val('im');e.qty=Math.max(1,+val('iq')||1);
   if(e.mode==='per'){e.every=Math.max(1,+val('ie')||1);e.cap=Math.max(0,+val('ix')||0)}}
@@ -175,15 +186,24 @@ const toggle=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 
 document.addEventListener('click',ev=>{
  const tb=ev.target.closest('[data-tab]');
- if(tb){grab();ui.tab=tb.dataset.tab;ui.open=null;return render()}
+ if(tb){grab();ui.tab=tb.dataset.tab;ui.open=null;ui.tripEdit=null;return render()}
  const b=ev.target.closest('[data-act]');if(!b||b.type==='checkbox')return;
  const act=b.dataset.act,v=b.dataset.v;grab();
  const trip=S.trips.find(t=>t.id===ui.open);
  if(act==='dtag')ui.draft.tags=toggle(ui.draft.tags,v);
  else if(act==='gen'){const d=ui.draft;const t={id:uid(),name:d.name.trim(),days:d.days,tags:[...d.tags],checked:{}};t.list=gen(t);S.trips.unshift(t);ui.open=t.id;ui.draft={name:'',days:7,tags:[]}}
- else if(act==='open')ui.open=v;
- else if(act==='back')ui.open=null;
+ else if(act==='open'){ui.open=v;ui.tripEdit=null}
+ else if(act==='back'){ui.open=null;ui.tripEdit=null}
  else if(act==='deltrip'){if(!confirm('Delete this trip?'))return;S.trips=S.trips.filter(t=>t.id!==v)}
+ else if(act==='edittrip'&&trip)ui.tripEdit={name:trip.name,days:trip.days,tags:[...trip.tags]};
+ else if(act==='ttag'&&ui.tripEdit)ui.tripEdit.tags=toggle(ui.tripEdit.tags,v);
+ else if(act==='canceltrip')ui.tripEdit=null;
+ else if(act==='savetrip'&&trip&&ui.tripEdit){const e=ui.tripEdit;
+  const upd={...trip,name:e.name.trim(),days:e.days,tags:[...e.tags]};const nl=gen(upd);const keep=new Set(nl.map(x=>x.id));
+  const gone=trip.list.filter(x=>!keep.has(x.id));
+  if(gone.length&&!confirm('These changes will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nSave anyway?'))return;
+  trip.name=upd.name;trip.days=upd.days;trip.tags=upd.tags;trip.list=nl;
+  Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});ui.tripEdit=null}
  else if(act==='refresh'&&trip){trip.list=gen(trip)}
  else if(act==='copy'&&trip){const txt=trip.name+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
   try{navigator.clipboard.writeText(txt);b.textContent='Copied'}catch(e){b.textContent='Copy failed'};return}
