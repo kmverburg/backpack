@@ -66,7 +66,12 @@ input[type=text],input[type=number],select{display:block;width:100%;margin-top:4
 <main id="app"></main>
 </div>
 <script>
-const KEY='backpack-v1';
+const KEY='backpack-v1',APP_VERSION='1';
+// Report browser errors to the Worker's logs: generic error info only, never app data. Max 5 per page load.
+let reports=0;
+const report=(e)=>{if(reports>=5)return;reports++;try{const m=e&&e.message||e;fetch('/api/client-error',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:String(m).slice(0,500),stack:String(e&&e.stack||'').slice(0,2048),path:location.pathname,version:APP_VERSION})}).catch(()=>{})}catch{}};
+addEventListener('error',ev=>report(ev.error||ev.message));
+addEventListener('unhandledrejection',ev=>report(ev.reason));
 const uid=()=>Math.random().toString(36).slice(2,9);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const seed=()=>({

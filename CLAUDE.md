@@ -41,6 +41,11 @@ Saved state from older versions must keep loading. When adding fields, handle th
 - UI state lives in `ui`; call `grab()` before `render()` so typed form values survive a re-render, and call `save()` after changing `S`.
 - Use `confirm()` before anything that deletes user data, as the existing code does.
 
+## Logging
+- Workers Logs is on (`[observability]` in `wrangler.toml`). Log with the `log(level, message, route, status, extra)` helper in `src/worker.js`: one JSON line via `console.error`/`warn`/`info`.
+- Unexpected errors and 5xx responses are `error` (with `stack`). Expected outcomes are not errors: missing login header is `info`, a 409 save conflict is `warn`.
+- Browser errors (`onerror`, unhandled rejections) are POSTed by `report()` in `public/index.html` to `/api/client-error` (same login check, max 4 KB, logged as `error` with `source: "client"`). Max 5 per page load. Send only message, stack, page path and app version, never user data (item or trip names, list contents). Bump `APP_VERSION` when releasing notable changes.
+
 ## Off-limits
 - `wrangler.toml` (routes, `workers_dev = false`, KV id) and the Access header check in `src/worker.js`.
 - `mobile/` and `.github/`.
