@@ -206,7 +206,9 @@ document.addEventListener('click',ev=>{
   if(gone.length&&!confirm('These changes will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nSave anyway?'))return;
   trip.name=upd.name;trip.days=upd.days;trip.tags=upd.tags;trip.list=nl;
   Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});ui.tripEdit=null}
- else if(act==='refresh'&&trip){trip.list=gen(trip)}
+ else if(act==='refresh'&&trip){const nl=gen(trip);const keep=new Set(nl.map(x=>x.id));const gone=trip.list.filter(x=>!keep.has(x.id));
+  if(gone.length&&!confirm('Updating will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nUpdate anyway?'))return;
+  trip.list=nl;Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]})}
  else if(act==='copy'&&trip){const txt=trip.name+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
   try{navigator.clipboard.writeText(txt);b.textContent='Copied'}catch(e){b.textContent='Copy failed'};return}
  else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,minDays:0,tags:[]};
