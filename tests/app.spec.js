@@ -148,3 +148,25 @@ test('deleting a trip asks for confirmation', async ({ page, api }) => {
   expect(msg).toBe('Delete this trip?');
   await expect(page.locator('.trip')).toHaveCount(0);
 });
+
+test('reports thrown browser errors, at most 5 per page load, without user data', async ({ page, api }) => {
+  await api.put({ ...base(), tags: [] });
+  const reqs = [];
+  page.on('request', (r) => { if (r.url().endsWith('/api/client-error')) reqs.push(r.postDataJSON()); });
+  await page.goto('/');
+  await expect(page.locator('#app')).not.toBeEmpty();
+  await page.evaluate(() => { for (let i = 0; i < 8; i++) setTimeout(() => { throw new Error('test boom ' + i); }, 0); });
+  await page.waitForTimeout(700);
+  expect(reqs.length).toBe(5);
+  expect(reqs[0].message).toContain('test boom');
+  expect(Object.keys(reqs[0]).sort()).toEqual(['message', 'path', 'stack', 'version']);
+  expect(reqs[0].path).toBe('/');
+  expect(JSON.stringify(reqs)).not.toContain('Passport');
+});
+
+test('reports unhandled promise rejections', async ({ page }) => {
+  await page.goto('/');
+  const req = page.waitForRequest((r) => r.url().endsWith('/api/client-error'));
+  await page.evaluate(() => { Promise.reject(new Error('rejected')); });
+  expect((await req).postDataJSON().message).toBe('rejected');
+});

@@ -27,3 +27,18 @@ test('rejects a save based on an outdated version', async ({ request, api }) => 
   expect((await stale.json()).data.tags).toEqual(['new']);
   expect((await api.get()).data.tags).toEqual(['new']);
 });
+
+test('accepts a client error report', async ({ request }) => {
+  const r = await request.post('/api/client-error', { headers: H, data: { message: 'boom', stack: 'at x', path: '/', version: '1' } });
+  expect(r.status()).toBe(200);
+});
+
+test('rejects a client error report over 4 KB', async ({ request }) => {
+  const r = await request.post('/api/client-error', { headers: H, data: { message: 'x'.repeat(5000) } });
+  expect(r.status()).toBe(413);
+});
+
+test('refuses /api/client-error without the login header', async ({ baseURL }) => {
+  const r = await fetch(baseURL + '/api/client-error', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"message":"x"}' });
+  expect(r.status).toBe(403);
+});
