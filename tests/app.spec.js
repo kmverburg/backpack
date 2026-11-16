@@ -1,4 +1,4 @@
-const { test, expect, item } = require('./helpers');
+const { test, expect, item, logs, waitLog } = require('./helpers');
 
 const settle = (page) => page.waitForTimeout(700); // saves are debounced by 300 ms
 
@@ -152,7 +152,7 @@ test('deleting a trip asks for confirmation', async ({ page, api }) => {
 test('reports thrown browser errors, at most 5 per page load, without user data', async ({ page, api }) => {
   await api.put({ ...base(), tags: [] });
   const reqs = [];
-  page.on('request', (r) => { if (r.url().endsWith('/api/client-error')) reqs.push(r.postDataJSON()); });
+  page.on('request', (r) => { if (r.url().endsWith('/api/log')) reqs.push(r.postDataJSON()); });
   await page.goto('/');
   await expect(page.locator('#app')).not.toBeEmpty();
   await page.evaluate(() => { for (let i = 0; i < 8; i++) setTimeout(() => { throw new Error('test boom ' + i); }, 0); });
@@ -166,7 +166,22 @@ test('reports thrown browser errors, at most 5 per page load, without user data'
 
 test('reports unhandled promise rejections', async ({ page }) => {
   await page.goto('/');
-  const req = page.waitForRequest((r) => r.url().endsWith('/api/client-error'));
+  const req = page.waitForRequest((r) => r.url().endsWith('/api/log'));
   await page.evaluate(() => { Promise.reject(new Error('rejected')); });
   expect((await req).postDataJSON().message).toBe('rejected');
+});
+
+test('reports key actions in one batch without user text', async ({ page, api }) => {
+  await api.put(base());
+  const reqs = [];
+  page.on('request', (r) => { if (r.url().endsWith('/api/log')) reqs.push(r.postDataJSON()); });
+  await plan(page, 'Zebra Safari', 3);
+  await settle(page);
+  expect(reqs.length).toBe(1);
+  expect(reqs[0].actions).toEqual(['trip_created']);
+  const s = JSON.stringify(reqs);
+  expect(s).not.toContain('Zebra');
+  expect(s).not.toContain('Passport');
+  await waitLog((o) => o.event === 'action' && o.action === 'trip_created');
+  expect(JSON.stringify(logs())).not.toContain('Zebra');
 });
