@@ -44,7 +44,14 @@ Saved state from older versions must keep loading. When adding fields, handle th
 ## Logging
 - Workers Logs is on (`[observability]` in `wrangler.toml`). Log with the `log(level, message, route, status, extra)` helper in `src/worker.js`: one JSON line via `console.error`/`warn`/`info`.
 - Unexpected errors and 5xx responses are `error` (with `stack`). Expected outcomes are not errors: missing login header is `info`, a 409 save conflict is `warn`.
-- Browser errors (`onerror`, unhandled rejections) are POSTed by `report()` in `public/index.html` to `/api/client-error` (same login check, max 4 KB, logged as `error` with `source: "client"`). Max 5 per page load. Send only message, stack, page path and app version, never user data (item or trip names, list contents). Bump `APP_VERSION` when releasing notable changes.
+- Browser errors (`onerror`, unhandled rejections) are POSTed by `report()` in `public/index.html` to `/api/log` (same login check, max 4 KB, logged as `error` with `source: "client"`). The old `/api/client-error` route still works for cached app versions. Max 5 per page load. Send only message, stack, page path and app version, never user data (item or trip names, list contents). Bump `APP_VERSION` when releasing notable changes.
+
+- Log events (JSON lines, filter on `event`; none contain user text):
+  - `request` (info): every `/api/*` request, with `method`, `path`, `status`, `ms`.
+  - `state_conflict` (warn): a rejected save (409), with `clientRev` and `serverRev`.
+  - `action` (info): a key user action, with `action` and `version`. Sent by the app as `{actions:[...]}` to `/api/log`, batched with the next save. Values: `trip_created`, `trip_edited`, `trip_deleted`, `item_added`, `item_edited`, `item_deleted`, `trip_type_added`, `trip_type_removed`, `list_updated_from_items`. The Worker drops any other value. Ticking items is not logged. To add an action, add it to `ACTIONS` in `src/worker.js` and call `act_('name')` in the app, never with names or other text.
+  - Client errors: `level: error` with `source: "client"` (see above).
+- In tests, `wrangler dev` output goes to a file (`BACKPACK_TEST_LOG`); use `waitLog()` / `logs()` from `tests/helpers.js` to assert on log lines.
 
 ## Off-limits
 - `wrangler.toml` (routes, `workers_dev = false`, KV id) and the Access header check in `src/worker.js`.

@@ -6,7 +6,13 @@ const log=(level,message,route,status,extra={})=>console[level](JSON.stringify({
 const MAX_REPORT=4096;
 const cut=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
 
-async function clientError(req) {
+// Actions the app may report. Anything else is dropped, so no user text can reach the logs.
+const ACTIONS=new Set(['trip_created','trip_edited','trip_deleted','item_added','item_edited','item_deleted','trip_type_added','trip_type_removed','list_updated_from_items']);
+const MAX_ACTIONS=20;
+
+// POST /api/log (also the old /api/client-error): a browser error ({message,stack,path,version})
+// and/or a batch of key actions ({actions:[name,...],version}).
+async function clientLog(req, route) {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
   if (Number(req.headers.get('Content-Length')) > MAX_REPORT) return json({ error: 'too large' }, 413);
   const text = await req.text();
@@ -14,8 +20,13 @@ async function clientError(req) {
   let b;
   try { b = JSON.parse(text); } catch { return json({ error: 'bad json' }, 400); }
   if (!b || typeof b !== 'object') return json({ error: 'bad body' }, 400);
-  log('error', cut(b.message, 500) || 'unknown client error', '/api/client-error', 200,
-    { source: 'client', stack: cut(b.stack, 2048), path: cut(b.path, 200), version: cut(b.version, 50) });
+  if (Array.isArray(b.actions)) {
+    for (const a of b.actions.slice(0, MAX_ACTIONS))
+      if (ACTIONS.has(a)) log('info', 'action', route, 200, { event: 'action', action: a, version: cut(b.version, 50) });
+  }
+  if (b.message !== undefined || !Array.isArray(b.actions))
+    log('error', cut(b.message, 500) || 'unknown client error', route, 200,
+      { source: 'client', stack: cut(b.stack, 2048), path: cut(b.path, 200), version: cut(b.version, 50) });
   return json({ ok: true });
 }
 
@@ -23,15 +34,18 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const route = url.pathname;
-    if (route !== '/api/state' && route !== '/api/client-error') return env.ASSETS.fetch(req);
+    if (!route.startsWith('/api/')) return env.ASSETS.fetch(req);
+    const t0 = Date.now();
+    let res;
     try {
-      const res = await handle(req, env, route);
+      res = await handle(req, env, route);
       if (res.status >= 500) log('error', 'server error response', route, res.status);
-      return res;
     } catch (e) {
       log('error', String(e && e.message || e), route, 500, { stack: e && e.stack });
-      return json({ error: 'server error' }, 500);
+      res = json({ error: 'server error' }, 500);
     }
+    log('info', 'request', route, res.status, { event: 'request', method: req.method, path: route, ms: Date.now() - t0 });
+    return res;
   }
 };
 
@@ -39,7 +53,8 @@ async function handle(req, env, route) {
   {
     // Cloudflare Access adds this header after login. Without it, refuse.
     if (!req.headers.get('Cf-Access-Jwt-Assertion')) { log('info', 'missing login header', route, 403); return new Response('Forbidden', { status: 403 }); }
-    if (route === '/api/client-error') return clientError(req);
+    if (route === '/api/log' || route === '/api/client-error') return clientLog(req, route);
+    if (route !== '/api/state') return json({ error: 'not found' }, 404);
 
     const raw = await env.BACKPACK.get('state');
     const current = raw ? JSON.parse(raw) : { rev: 0, data: null };
@@ -50,7 +65,7 @@ async function handle(req, env, route) {
       let body;
       try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
       if (!body || typeof body.data !== 'object') return json({ error: 'bad body' }, 400);
-      if (body.rev !== current.rev) { log('warn', 'save conflict', route, 409); return json(current, 409); } // someone saved in between
+      if (body.rev !== current.rev) { log('warn', 'save conflict', route, 409, { event: 'state_conflict', clientRev: body.rev, serverRev: current.rev }); return json(current, 409); } // someone saved in between
       const next = { rev: current.rev + 1, data: body.data };
       await env.BACKPACK.put('state', JSON.stringify(next));
       return json({ rev: next.rev });

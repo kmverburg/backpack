@@ -2,6 +2,13 @@ const { test: base, expect } = require('@playwright/test');
 
 const H = { 'Cf-Access-Jwt-Assertion': 'local-test' };
 let n = 0;
+// JSON log lines the Worker has written so far (wrangler dev output).
+const logs = () => require('fs').readFileSync(process.env.BACKPACK_TEST_LOG, 'utf8').split('\n')
+  .map((l) => { const i = l.indexOf('{'); try { return JSON.parse(l.slice(i, l.lastIndexOf('}') + 1)); } catch { return null; } }).filter((o) => o && o.level);
+const waitLog = async (pred, ms = 5000) => {
+  for (const t = Date.now(); Date.now() - t < ms;) { const m = logs().filter(pred); if (m.length) return m; await new Promise((r) => setTimeout(r, 100)); }
+  return [];
+};
 const item = (o) => ({ id: 'i' + ++n, name: 'Thing', cat: 'Misc', mode: 'fixed', qty: 1, every: 1, cap: 0, tags: [], ...o });
 
 // Every test starts from an empty state: no items, no trip types, no trips.
@@ -21,4 +28,4 @@ const test = base.extend({
   },
 });
 
-module.exports = { test, expect, item, H };
+module.exports = { logs, waitLog, test, expect, item, H };
