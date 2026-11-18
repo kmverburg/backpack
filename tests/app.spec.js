@@ -231,3 +231,83 @@ test('renaming to an empty name is refused', async ({ page, api }) => {
   await settle(page);
   expect((await api.get()).data.tags).toEqual(['Beach', 'City']);
 });
+
+// Start dates
+const ymdOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const inDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymdOf(d); };
+const mk = (id, name, startDate, days = 3) => ({ id, name, days, tags: [], list: [], checked: {}, ...(startDate ? { startDate } : {}) });
+
+test('saves a start date when planning and shows the date range', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await page.locator('#tn').fill('Lisbon');
+  await page.locator('#td').fill('7');
+  await page.locator('#td').dispatchEvent('change');
+  await page.locator('#ts').fill('2027-07-12');
+  await page.getByRole('button', { name: /Make packlist/ }).click();
+  const expected = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    .formatRange(Date.UTC(2027, 6, 12), Date.UTC(2027, 6, 18));
+  await expect(page.locator('.trip-date')).toHaveText(expected);
+  await settle(page);
+  expect((await api.get()).data.trips[0].startDate).toBe('2027-07-12');
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.locator('.trip-date')).toHaveText(expected);
+});
+
+test('date range is in the browser locale and crosses months', async ({ browser, api }) => {
+  await api.put({ ...base(), trips: [mk('a', 'Alps', '2027-07-30', 5)] });
+  const ctx = await browser.newContext({ locale: 'en-GB', extraHTTPHeaders: { 'Cf-Access-Jwt-Assertion': 'local-test' } });
+  const page = await ctx.newPage();
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
+  await page.goto('http://localhost:8788/');
+  await expect(page.locator('.trip-date')).toHaveText('30 Jul – 3 Aug 2027');
+  await ctx.close();
+});
+
+test('edits, changes and clears the start date; undated trips show no date', async ({ page, api }) => {
+  await api.put({ ...base(), trips: [mk('a', 'Plain', null)] });
+  await page.goto('/');
+  await expect(page.locator('.trip-date')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open' }).click();
+  await page.getByRole('button', { name: 'Edit trip' }).click();
+  await page.locator('#es').fill('2027-03-01');
+  await page.getByRole('button', { name: 'Save trip' }).click();
+  await settle(page);
+  expect((await api.get()).data.trips[0].startDate).toBe('2027-03-01');
+  await page.getByRole('button', { name: 'Edit trip' }).click();
+  await expect(page.locator('#es')).toHaveValue('2027-03-01');
+  await page.locator('#es').fill('2027-04-02');
+  await page.getByRole('button', { name: 'Save trip' }).click();
+  await settle(page);
+  expect((await api.get()).data.trips[0].startDate).toBe('2027-04-02');
+  await page.getByRole('button', { name: 'Edit trip' }).click();
+  await page.locator('#es').fill('');
+  await page.getByRole('button', { name: 'Save trip' }).click();
+  await settle(page);
+  expect((await api.get()).data.trips[0].startDate).toBeUndefined();
+  await expect(page.locator('.trip-date')).toHaveCount(0);
+});
+
+test('sorts upcoming first, then undated, then a collapsed Past trips group', async ({ page, api }) => {
+  await api.put({ ...base(), trips: [
+    mk('p1', 'Old', inDays(-30)), mk('n1', 'Undated', null), mk('u2', 'Later', inDays(40)),
+    mk('u1', 'Soon', inDays(5)), mk('p2', 'Older', inDays(-90)), mk('now', 'Ongoing', inDays(-1)),
+  ] });
+  await page.goto('/');
+  const top = page.locator('#app > section:last-of-type > .trip b');
+  await expect(top).toHaveText(['Ongoing', 'Soon', 'Later', 'Undated']);
+  const past = page.locator('details#pastg');
+  await expect(past).toHaveJSProperty('open', false);
+  await expect(past.locator('summary')).toHaveText('Past trips');
+  await past.locator('summary').click();
+  await expect(past.locator('.trip b')).toHaveText(['Old', 'Older']);
+  await page.getByRole('button', { name: 'Open' }).first().click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(past).toHaveJSProperty('open', true);
+});
+
+test('no Past trips group when no trip is past', async ({ page, api }) => {
+  await api.put({ ...base(), trips: [mk('a', 'Soon', inDays(2)), mk('b', 'None', null)] });
+  await page.goto('/');
+  await expect(page.locator('details#pastg')).toHaveCount(0);
+});
