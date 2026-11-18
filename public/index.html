@@ -32,6 +32,7 @@ label.f{display:block;font-weight:600;font-size:14px;margin-bottom:12px}
 input[type=text],input[type=number],select{display:block;width:100%;margin-top:4px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit}
 .row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1 1 130px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px}
+.chip-g{display:inline-flex;align-items:center;gap:2px}
 .chip{border:1.5px solid var(--line);background:var(--bg);color:var(--ink);border-radius:99px;padding:6px 14px;font:500 14px inherit;font-family:inherit;cursor:pointer}
 .chip[aria-pressed=true]{background:var(--pine);border-color:var(--pine);color:var(--onpine)}
 .btn{border:0;border-radius:10px;padding:11px 18px;font:600 15px inherit;font-family:inherit;cursor:pointer;background:var(--pine);color:var(--onpine)}
@@ -109,7 +110,7 @@ async function push(){
  catch(e){dirty=false;setStatus('Cannot reach the server. Changes are not saved.')}
 }
 const save=()=>{dirty=true;clearTimeout(timer);timer=setTimeout(push,300)};
-const ui={tab:'trips',open:null,draft:{name:'',days:7,tags:[]},edit:null,tripEdit:null};
+const ui={tab:'trips',open:null,draft:{name:'',days:7,tags:[]},edit:null,tripEdit:null,rename:null};
 const qtyFor=(it,d)=>{let q=it.mode==='fixed'?it.qty:it.qty*Math.ceil(d/Math.max(1,it.every));return it.mode==='per'&&it.cap>0?Math.min(q,it.cap):q};
 const describe=it=>{
  let r=it.mode==='fixed'?`${it.qty} per trip`:`${it.qty} per ${it.every>1?it.every+' days':'day'}${it.cap>0?`, max ${it.cap}`:''}`;
@@ -181,7 +182,8 @@ function itemsView(){
  return form+`<section class="panel"><div class="top"><h2>My items</h2><button class="btn sun sm" data-act="new">Add item</button></div>
  ${cats.map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(i=>`<div class="item"><div class="t"><b>${esc(i.name)}</b><small>${esc(describe(i))}</small></div>
  <div class="acts"><button class="btn sm ghost" data-act="edit" data-v="${i.id}">Edit</button><button class="btn sm ghost x" data-act="delitem" data-v="${i.id}" aria-label="Delete ${esc(i.name)}">Delete</button></div></div>`).join('')}</div>`).join('')||'<p class="hint">No items yet. Add the things you always or sometimes pack.</p>'}</section>
- <section class="panel"><h2>Trip types</h2><div class="chips">${S.tags.map(g=>`<button class="chip" data-act="deltag" data-v="${esc(g)}" title="Remove ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>
+ <section class="panel"><h2>Trip types</h2><div class="chips">${S.tags.map(g=>`<span class="chip-g"><button class="chip" data-act="deltag" data-v="${esc(g)}" title="Remove ${esc(g)}">${esc(g)} ✕</button><button class="btn sm ghost" data-act="rentag" data-v="${esc(g)}" aria-label="Rename ${esc(g)}">Rename</button></span>`).join('')}</div>
+ ${ui.rename?`<div class="row"><input type="text" id="rn" value="${esc(ui.rename.name)}" aria-label="New name for ${esc(ui.rename.old)}" style="margin:0"><button class="btn" data-act="saverename" style="flex:0 0 auto">Save</button><button class="btn ghost" data-act="cancelrename" style="flex:0 0 auto">Cancel</button></div>${ui.rename.err?`<p class="hint" id="rnerr" role="alert" style="color:#b3261e">${esc(ui.rename.err)}</p>`:''}`:''}
  <div class="row"><input type="text" id="nt" placeholder="e.g. Camping" style="margin:0"><button class="btn" data-act="addtag" style="flex:0 0 auto">Add type</button></div></section>`}
 
 function render(){
@@ -191,6 +193,7 @@ function render(){
 }
 const val=id=>{const e=document.getElementById(id);return e?e.value:''};
 const grab=()=>{ // keep typed values before re-render
+ if(ui.rename&&document.getElementById('rn'))ui.rename.name=val('rn');
  if(ui.tripEdit&&document.getElementById('en')){ui.tripEdit.name=val('en');ui.tripEdit.days=Math.max(1,Math.min(365,+val('ed')||1))}
  if(ui.tab==='trips'&&!ui.open){ui.draft.name=val('tn');ui.draft.days=Math.max(1,+val('td')||1)}
  if(ui.tab==='items'&&ui.edit&&document.getElementById('in')){const e=ui.edit;e.name=val('in');e.cat=val('ic');e.mode=val('im');e.qty=Math.max(1,+val('iq')||1);
@@ -232,6 +235,14 @@ document.addEventListener('click',ev=>{
   e.name=e.name.trim();e.cat=e.cat.trim();const i=S.items.findIndex(x=>x.id===e.id);act_(i>=0?'item_edited':'item_added');i>=0?S.items[i]=e:S.items.push(e);ui.edit=null}
  else if(act==='delitem'){S.items=S.items.filter(i=>i.id!==v);act_('item_deleted')}
  else if(act==='addtag'){const n=val('nt').trim();if(n&&!S.tags.includes(n)){S.tags.push(n);act_('trip_type_added')}}
+ else if(act==='rentag')ui.rename={old:v,name:v,err:''};
+ else if(act==='cancelrename')ui.rename=null;
+ else if(act==='saverename'&&ui.rename){const r=ui.rename,n=r.name.trim();
+  if(!n)r.err='Enter a name for the trip type.';
+  else if(S.tags.some(g=>g!==r.old&&g.trim().toLowerCase()===n.toLowerCase()))r.err='There is already a trip type called "'+n+'". Pick a different name.';
+  else{if(n!==r.old){const sw=a=>a&&a.map(g=>g===r.old?n:g);
+   S.tags=sw(S.tags);S.items.forEach(i=>i.tags=sw(i.tags));S.trips.forEach(t=>t.tags=sw(t.tags));ui.draft.tags=sw(ui.draft.tags);if(ui.tripEdit)ui.tripEdit.tags=sw(ui.tripEdit.tags)}
+   ui.rename=null}}
  else if(act==='deltag'){if(!confirm('Remove trip type "'+v+'"? Items limited to it will then go on every trip.'))return;
   act_('trip_type_removed');S.tags=S.tags.filter(g=>g!==v);S.items.forEach(i=>i.tags=i.tags.filter(g=>g!==v));ui.draft.tags=ui.draft.tags.filter(g=>g!==v)}
  save();render();

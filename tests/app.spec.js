@@ -185,3 +185,49 @@ test('reports key actions in one batch without user text', async ({ page, api })
   await waitLog((o) => o.event === 'action' && o.action === 'trip_created');
   expect(JSON.stringify(logs())).not.toContain('Zebra');
 });
+
+const renameSetup = (api) => api.put({
+  tags: ['Beach', 'City'],
+  items: [item({ id: 'swim', name: 'Swim shorts', tags: ['Beach'] }), item({ id: 'pass', name: 'Passport' })],
+  trips: [{ id: 't1', name: 'Trip', days: 3, tags: ['Beach'], list: [{ id: 'swim', name: 'Swim shorts', cat: '', qty: 1 }], checked: { swim: true } }],
+});
+async function startRename(page, from) {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'My items' }).click();
+  await page.getByRole('button', { name: 'Rename ' + from }).click();
+}
+
+test('renaming a trip type updates items and trips', async ({ page, api }) => {
+  await renameSetup(api);
+  await startRename(page, 'Beach');
+  await page.locator('#rn').fill('  Sea side ');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Sea side ✕/ })).toBeVisible();
+  await settle(page);
+  const d = (await api.get()).data;
+  expect(d.tags).toEqual(['Sea side', 'City']);
+  expect(d.items.find((i) => i.id === 'swim').tags).toEqual(['Sea side']);
+  expect(d.trips[0].tags).toEqual(['Sea side']);
+  expect(d.trips[0].list.map((x) => x.id)).toEqual(['swim']);
+  expect(d.trips[0].checked).toEqual({ swim: true });
+});
+
+test('renaming to a used name is refused', async ({ page, api }) => {
+  await renameSetup(api);
+  await startRename(page, 'Beach');
+  await page.locator('#rn').fill(' city ');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#rnerr')).toContainText('already a trip type');
+  await settle(page);
+  expect((await api.get()).data.tags).toEqual(['Beach', 'City']);
+});
+
+test('renaming to an empty name is refused', async ({ page, api }) => {
+  await renameSetup(api);
+  await startRename(page, 'Beach');
+  await page.locator('#rn').fill('   ');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#rnerr')).toContainText('Enter a name');
+  await settle(page);
+  expect((await api.get()).data.tags).toEqual(['Beach', 'City']);
+});
