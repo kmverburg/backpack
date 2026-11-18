@@ -7,7 +7,7 @@ const MAX_REPORT=4096;
 const cut=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
 
 // Actions the app may report. Anything else is dropped, so no user text can reach the logs.
-const ACTIONS=new Set(['trip_created','trip_edited','trip_deleted','item_added','item_edited','item_deleted','trip_type_added','trip_type_removed','list_updated_from_items']);
+const ACTIONS=new Set(['trip_created','trip_edited','trip_deleted','item_added','item_edited','item_deleted','trip_type_added','trip_type_removed','list_updated_from_items','person_added','person_removed','trip_people_changed']);
 const MAX_ACTIONS=20;
 
 // POST /api/log (also the old /api/client-error): a browser error ({message,stack,path,version})

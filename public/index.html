@@ -60,6 +60,7 @@ summary{cursor:pointer;font-weight:600;padding:10px 0;border-top:1px solid var(-
 .item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
 .item .t{flex:1;min-width:0}.item small{display:block;color:var(--mute)}
 .x{color:var(--danger)}
+.who{font-size:20px;margin:18px 0 8px;padding-bottom:4px;border-bottom:2px solid var(--sun)}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 </style>
 </head>
@@ -71,7 +72,7 @@ summary{cursor:pointer;font-weight:600;padding:10px 0;border-top:1px solid var(-
 <main id="app"></main>
 </div>
 <script>
-const KEY='backpack-v1',APP_VERSION='1';
+const KEY='backpack-v1',APP_VERSION='2';
 // Report browser errors to the Worker's logs: generic error info only, never app data. Max 5 per page load.
 let reports=0;
 const report=(e)=>{if(reports>=5)return;reports++;try{const m=e&&e.message||e;fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:String(m).slice(0,500),stack:String(e&&e.stack||'').slice(0,2048),path:location.pathname,version:APP_VERSION})}).catch(()=>{})}catch{}};
@@ -84,7 +85,7 @@ const flush=()=>{if(!acts.length)return;const actions=acts.splice(0,20);try{fetc
 const uid=()=>Math.random().toString(36).slice(2,9);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const seed=()=>({
- tags:['Beach / hot','City','Hiking','Winter'],
+ people:[{id:'me',name:'Me'}],tags:['Beach / hot','City','Hiking','Winter'],
  items:[
   {id:uid(),name:'Passport',cat:'Documents',mode:'fixed',qty:1,every:1,cap:0,tags:[]},
   {id:uid(),name:'Phone charger',cat:'Electronics',mode:'fixed',qty:1,every:1,cap:0,tags:[]},
@@ -97,27 +98,40 @@ const seed=()=>({
   {id:uid(),name:'Hiking boots',cat:'Clothes',mode:'fixed',qty:1,every:1,cap:0,tags:['Hiking']},
   {id:uid(),name:'Warm jacket',cat:'Clothes',mode:'fixed',qty:1,every:1,cap:0,tags:['Winter']}
  ],trips:[]});
+// Brings saved data from before travel companions up to date (idempotent): a first person "Me", trips with just that person,
+// and list lines per person with ticks keyed by line id ("itemId@personId" for a traveller, plain item id for shared lines).
+function migrate(d){
+ if(!Array.isArray(d.people)||!d.people.length)d.people=[{id:'me',name:'Me'}];
+ (d.trips||[]).forEach(t=>{
+  if(!Array.isArray(t.people)||!t.people.length)t.people=[d.people[0].id];
+  t.checked=t.checked||{};
+  (t.list||[]).forEach(x=>{if('person' in x)return;x.person=t.people[0];x.item=x.id;x.id=x.item+'@'+x.person;
+   if(x.item in t.checked){t.checked[x.id]=t.checked[x.item];delete t.checked[x.item]}})});
+ return d}
 let S=seed(),rev=0,ready=false,dirty=false,timer;
 const setStatus=m=>{const e=document.getElementById('status');if(e)e.textContent=m};
 const api=(method,body)=>fetch('/api/state',{method,headers:{'Content-Type':'application/json'},body:body&&JSON.stringify(body)});
 async function load(){
  if(dirty)return;
- try{const r=await api('GET');if(!r.ok)throw 0;const j=await r.json();rev=j.rev;if(j.data&&j.data.items)S=j.data;ready=true;setStatus('')}
+ try{const r=await api('GET');if(!r.ok)throw 0;const j=await r.json();rev=j.rev;if(j.data&&j.data.items)S=migrate(j.data);ready=true;setStatus('')}
  catch(e){setStatus('Cannot reach the server. Changes are not saved.')}
 }
 async function push(){
  if(!ready){dirty=false;return}
  try{const r=await api('PUT',{rev,data:S});const j=await r.json();dirty=false;
   flush();
-  if(r.status===409){S=j.data||S;rev=j.rev;setStatus('Someone else changed the lists at the same time. Check your last edit.');render()}
+  if(r.status===409){S=migrate(j.data||S);rev=j.rev;setStatus('Someone else changed the lists at the same time. Check your last edit.');render()}
   else if(r.ok){rev=j.rev;setStatus('')}else throw 0}
  catch(e){dirty=false;setStatus('Cannot reach the server. Changes are not saved.')}
 }
 const save=()=>{dirty=true;clearTimeout(timer);timer=setTimeout(push,300)};
-const ui={tab:'trips',open:null,draft:{name:'',loc:null,days:7,start:'',tags:[]},pastOpen:false,edit:null,tripEdit:null,rename:null};
+const ui={tab:'trips',open:null,draft:{name:'',loc:null,days:7,start:'',tags:[],people:null},pastOpen:false,edit:null,tripEdit:null,rename:null,prename:null,revSel:[]};
 const qtyFor=(it,d)=>{let q=it.mode==='fixed'?it.qty:it.qty*Math.ceil(d/Math.max(1,it.every));return it.mode==='per'&&it.cap>0?Math.min(q,it.cap):q};
 const describe=it=>{
  let r=it.mode==='fixed'?`${it.qty} per trip`:`${it.qty} per ${it.every>1?it.every+' days':'day'}${it.cap>0?`, max ${it.cap}`:''}`;
+ const pn=id=>(S.people.find(p=>p.id===id)||{}).name;
+ if(it.for==='shared')r+=' · shared'+(pn(it.packer)?', usually packed by '+pn(it.packer):'');
+ else if(Array.isArray(it.for))r+=' · only for '+it.for.map(pn).filter(Boolean).join(', ');
  return r+' · '+(it.tags.length?'only on '+it.tags.join(', '):'every trip')+(it.minDays>0?' · only trips longer than '+it.minDays+' days':'')};
 const sentence=it=>{
  const q=Math.max(1,+it.qty||1);
@@ -126,8 +140,16 @@ const sentence=it=>{
  const per=ev>1?`${ev} days`:'day';
  const ex=d=>qtyFor({...it,qty:q,every:ev,cap},d);
  return `Pack <b>${q} per ${per}</b>, ${cap>0?`with a maximum of <b>${cap}</b>`:'with <b>no maximum</b>'}. A 7-day trip gets ${ex(7)}, a 14-day trip gets ${ex(14)}.`};
-const gen=t=>S.items.filter(it=>(!it.tags.length||it.tags.some(g=>t.tags.includes(g)))&&!(it.minDays>0&&t.days<=it.minDays))
- .map(it=>({id:it.id,name:it.name,cat:it.cat||'Other',qty:qtyFor(it,t.days)}));
+const pname=id=>(S.people.find(p=>p.id===id)||{}).name||'';
+const tpeople=t=>{const a=(t.people||S.people.map(p=>p.id)).filter(id=>S.people.some(p=>p.id===id));return a.length?a:[S.people[0].id]};
+// One line per traveller for per-person items (id "item@person"), one line for shared items (id = item id).
+const gen=t=>{const ppl=tpeople(t),out=[];
+ S.items.filter(it=>(!it.tags.length||it.tags.some(g=>t.tags.includes(g)))&&!(it.minDays>0&&t.days<=it.minDays)).forEach(it=>{
+  const b={item:it.id,name:it.name,cat:it.cat||'Other',qty:qtyFor(it,t.days)};
+  if(it.for==='shared')out.push({...b,id:it.id,person:null});
+  else ppl.filter(p=>!Array.isArray(it.for)||it.for.includes(p)).forEach(p=>out.push({...b,id:it.id+'@'+p,person:p}))});
+ return out};
+const lineName=x=>x.name+(x.person&&S.people.length>1?' ('+pname(x.person)+')':'');
 const group=list=>{const m={};list.forEach(x=>(m[x.cat]=m[x.cat]||[]).push(x));return Object.entries(m)};
 
 // Place suggestions (via the Worker): wait 300 ms after typing, never more than one request per second.
@@ -164,6 +186,8 @@ function tripsView(){
  <div class="row"><label class="f" style="flex-basis:100%">Location<input type="text" id="tn" value="${esc(d.name)}" placeholder="Lisbon" autocomplete="off"></label><div id="sgbox" style="flex-basis:100%">${sugHtml('tn')}</div>
  <label class="f">Days<input type="number" id="td" min="1" max="365" value="${d.days}"></label>
  <label class="f">Start date (optional)<input type="date" id="ts" value="${esc(d.start)}"></label></div>
+ <div class="f" style="margin-bottom:0">Who's coming?</div>
+ <div class="chips">${S.people.map(p=>`<button class="chip" data-act="dpeople" data-v="${esc(p.id)}" aria-pressed="${tpeople(d).includes(p.id)}">${esc(p.name)}</button>`).join('')}</div>
  <div class="f" style="margin-bottom:0">What kind of trip?</div>
  <div class="chips">${S.tags.map(g=>`<button class="chip" data-act="dtag" data-v="${esc(g)}" aria-pressed="${d.tags.includes(g)}">${esc(g)}</button>`).join('')||'<span class="hint">Add trip types under My items.</span>'}</div>
  <button class="btn sun" data-act="gen">Make packlist · ${preview} items</button></section>
@@ -177,11 +201,21 @@ function tripForm(){
  <div class="row"><label class="f" style="flex-basis:100%">Location<input type="text" id="en" value="${esc(e.name)}" placeholder="Lisbon" autocomplete="off"></label><div id="sgbox" style="flex-basis:100%">${sugHtml('en')}</div>
  <label class="f">Days<input type="number" id="ed" min="1" max="365" value="${e.days}"></label>
  <label class="f">Start date (optional)<input type="date" id="es" value="${esc(e.start)}"></label></div>
+ <div class="f" style="margin-bottom:0">Who's coming?</div>
+ <div class="chips">${S.people.map(p=>`<button class="chip" data-act="tpeople" data-v="${esc(p.id)}" aria-pressed="${tpeople(e).includes(p.id)}">${esc(p.name)}</button>`).join('')}</div>
  <div class="f" style="margin-bottom:0">What kind of trip?</div>
  <div class="chips">${S.tags.map(g=>`<button class="chip" data-act="ttag" data-v="${esc(g)}" aria-pressed="${e.tags.includes(g)}">${esc(g)}</button>`).join('')||'<span class="hint">Add trip types under My items.</span>'}</div>
  <p class="hint">Saving rebuilds the packlist from your items. Packed ticks are kept for items that stay.</p>
  <button class="btn" data-act="savetrip">Save trip</button> <button class="btn ghost" data-act="canceltrip">Cancel</button></section>`}
 
+const lineHtml=(x,t)=>{const it=x.person===null&&S.items.find(i=>i.id===x.item),pk=it&&pname(it.packer);
+ return `<label class="li ${t.checked[x.id]?'done':''}"><input type="checkbox" data-act="chk" data-v="${esc(x.id)}" ${t.checked[x.id]?'checked':''}><span>${esc(x.name)}</span>${pk?`<small class="hint">${esc(pk)} packs</small>`:''}<b class="q">${x.qty}×</b></label>`};
+const catsHtml=(l,t)=>group(l).map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(x=>lineHtml(x,t)).join('')}</div>`).join('');
+// One section per traveller plus Shared (headings only when there is more than one group).
+const cats=(list,t)=>{const ppl=tpeople(t),sh=list.filter(x=>x.person===null);
+ if(ppl.length<2&&!sh.length)return catsHtml(list,t);
+ return ppl.map(id=>[pname(id),list.filter(x=>x.person===id)]).concat([['Shared',sh]]).filter(g=>g[1].length)
+  .map(g=>`<section class="sec"><h2 class="who">${esc(g[0])}</h2>${catsHtml(g[1],t)}</section>`).join('')};
 function listView(t){
  const n=t.list.length,c=t.list.filter(x=>t.checked[x.id]).length;
  return `<div class="top"><button class="btn sm ghost" data-act="back">Back</button>
@@ -189,11 +223,12 @@ function listView(t){
  ${tripForm()}<section class="panel"><h2>${esc(tripName(t))}</h2>${range(t)?`<p class="hint trip-date" style="margin-top:-6px">${esc(range(t))}</p>`:''}
  <div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c} of ${n} packed</div>
  <div class="bar"><i style="width:${n?c/n*100:0}%"></i></div>
- ${group(t.list).map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(x=>`<label class="li ${t.checked[x.id]?'done':''}"><input type="checkbox" data-act="chk" data-v="${x.id}" ${t.checked[x.id]?'checked':''}><span>${esc(x.name)}</span><b class="q">${x.qty}×</b></label>`).join('')}</div>`).join('')||'<p class="hint">Nothing matches this trip.</p>'}
+ ${cats(t.list,t)||'<p class="hint">Nothing matches this trip.</p>'}
  </section>`}
 
 function itemsView(){
- const e=ui.edit;
+ const e=ui.edit,fk=e&&(Array.isArray(e.for)?'only':e.for==='shared'?'shared':'each');
+ const review=S.sharedReview===true&&S.people.length>1?`<section class="panel" id="review"><h2>Which items are shared?</h2><p class="hint">You added a second traveller. Tick the items you only need once per trip, whoever is coming (like a first-aid kit), then mark them as shared. This only changes new lists, or lists you update from items.</p>${S.items.filter(i=>i.for!=='shared').map(i=>`<label class="li"><input type="checkbox" data-act="rvchk" data-v="${esc(i.id)}" ${ui.revSel.includes(i.id)?'checked':''}><span>${esc(i.name)}</span></label>`).join('')}<p><button class="btn" data-act="rvmark">Mark ticked items as shared</button> <button class="btn ghost" data-act="rvskip">Not now</button></p></section>`:'';
  const form=e?`<section class="panel"><h2>${S.items.some(i=>i.id===e.id)?'Edit item':'New item'}</h2>
  <label class="f">Item<input type="text" id="in" value="${esc(e.name)}" placeholder="Underwear"></label>
  <label class="f">Category<input type="text" id="ic" list="cats" value="${esc(e.cat)}" placeholder="Clothes"></label>
@@ -203,6 +238,9 @@ function itemsView(){
  ${e.mode==='per'?`<label class="f">Per how many days<input type="number" id="ie" min="1" value="${e.every}"></label>
  <label class="f">Maximum (0 = no cap)<input type="number" id="ix" min="0" value="${e.cap}"></label>`:''}</div>
  <p class="sentence" id="isent">${sentence(e)}</p>
+ <label class="f">Who needs it?<select id="if"><option value="each" ${fk==='each'?'selected':''}>Per person: everyone brings their own</option><option value="shared" ${fk==='shared'?'selected':''}>Shared: needed once per trip</option><option value="only" ${fk==='only'?'selected':''}>Only for…</option></select></label>
+ ${fk==='only'?`<div class="chips">${S.people.map(p=>`<button class="chip" data-act="efor" data-v="${esc(p.id)}" aria-pressed="${e.for.includes(p.id)}">${esc(p.name)}</button>`).join('')}</div>`:''}
+ ${fk==='shared'?`<label class="f">Who usually packs it? (optional)<select id="ip"><option value="">Nobody in particular</option>${S.people.map(p=>`<option value="${esc(p.id)}" ${e.packer===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>`:''}
  <div class="f" style="margin-bottom:0">Take it on</div>
  <div class="chips"><button class="chip" data-act="etag" data-v="" aria-pressed="${!e.tags.length}">Every trip</button>
  ${S.tags.map(g=>`<button class="chip" data-act="etag" data-v="${esc(g)}" aria-pressed="${e.tags.includes(g)}">${esc(g)}</button>`).join('')}</div>
@@ -210,12 +248,15 @@ function itemsView(){
  <label class="f">Only on trips longer than (days, 0 = any length)<input type="number" id="imd" min="0" value="${+e.minDays||0}"></label>
  <button class="btn" data-act="saveitem">Save item</button> <button class="btn ghost" data-act="cancel">Cancel</button></section>`:'';
  const cats=group(S.items.map(i=>({...i,cat:i.cat||'Other'})));
- return form+`<section class="panel"><div class="top"><h2>My items</h2><button class="btn sun sm" data-act="new">Add item</button></div>
+ return review+form+`<section class="panel"><div class="top"><h2>My items</h2><button class="btn sun sm" data-act="new">Add item</button></div>
  ${cats.map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(i=>`<div class="item"><div class="t"><b>${esc(i.name)}</b><small>${esc(describe(i))}</small></div>
  <div class="acts"><button class="btn sm ghost" data-act="edit" data-v="${i.id}">Edit</button><button class="btn sm ghost x" data-act="delitem" data-v="${i.id}" aria-label="Delete ${esc(i.name)}">Delete</button></div></div>`).join('')}</div>`).join('')||'<p class="hint">No items yet. Add the things you always or sometimes pack.</p>'}</section>
  <section class="panel"><h2>Trip types</h2><div class="chips">${S.tags.map(g=>`<span class="chip-g"><button class="chip" data-act="deltag" data-v="${esc(g)}" title="Remove ${esc(g)}">${esc(g)} ✕</button><button class="btn sm ghost" data-act="rentag" data-v="${esc(g)}" aria-label="Rename ${esc(g)}">Rename</button></span>`).join('')}</div>
  ${ui.rename?`<div class="row"><input type="text" id="rn" value="${esc(ui.rename.name)}" aria-label="New name for ${esc(ui.rename.old)}" style="margin:0"><button class="btn" data-act="saverename" style="flex:0 0 auto">Save</button><button class="btn ghost" data-act="cancelrename" style="flex:0 0 auto">Cancel</button></div>${ui.rename.err?`<p class="hint" id="rnerr" role="alert" style="color:#b3261e">${esc(ui.rename.err)}</p>`:''}`:''}
- <div class="row"><input type="text" id="nt" placeholder="e.g. Camping" style="margin:0"><button class="btn" data-act="addtag" style="flex:0 0 auto">Add type</button></div></section>`}
+ <div class="row"><input type="text" id="nt" placeholder="e.g. Camping" style="margin:0"><button class="btn" data-act="addtag" style="flex:0 0 auto">Add type</button></div></section>
+ <section class="panel"><h2>People</h2><div class="chips">${S.people.map(p=>`<span class="chip-g"><button class="chip" ${S.people.length>1?`data-act="delperson" data-v="${esc(p.id)}" title="Remove ${esc(p.name)}">${esc(p.name)} ✕`:`disabled title="At least one person is needed">${esc(p.name)}`}</button><button class="btn sm ghost" data-act="renperson" data-v="${esc(p.id)}" aria-label="Rename ${esc(p.name)}">Rename</button></span>`).join('')}</div>
+ ${ui.prename?`<div class="row"><input type="text" id="prn" value="${esc(ui.prename.name)}" aria-label="New name for ${esc(ui.prename.old)}" style="margin:0"><button class="btn" data-act="saveprename" style="flex:0 0 auto">Save</button><button class="btn ghost" data-act="cancelprename" style="flex:0 0 auto">Cancel</button></div>${ui.prename.err?`<p class="hint" id="prnerr" role="alert" style="color:#b3261e">${esc(ui.prename.err)}</p>`:''}`:''}
+ <div class="row"><input type="text" id="np" placeholder="e.g. Anna" style="margin:0"><button class="btn" data-act="addperson" style="flex:0 0 auto">Add person</button></div></section>`}
 
 function render(){
  document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.tab===ui.tab));
@@ -225,11 +266,14 @@ function render(){
 const val=id=>{const e=document.getElementById(id);return e?e.value:''};
 const grab=()=>{ // keep typed values before re-render
  if(ui.rename&&document.getElementById('rn'))ui.rename.name=val('rn');
+ if(ui.prename&&document.getElementById('prn'))ui.prename.name=val('prn');
  if(ui.tripEdit&&document.getElementById('en')){ui.tripEdit.name=val('en');ui.tripEdit.days=Math.max(1,Math.min(365,+val('ed')||1));ui.tripEdit.start=val('es')}
  if(ui.tab==='trips'&&!ui.open){ui.draft.name=val('tn');ui.draft.days=Math.max(1,+val('td')||1);ui.draft.start=val('ts')}
  if(ui.tab==='items'&&ui.edit&&document.getElementById('in')){const e=ui.edit;e.name=val('in');e.cat=val('ic');e.mode=val('im');e.qty=Math.max(1,+val('iq')||1);
   if(e.mode==='per'){e.every=Math.max(1,+val('ie')||1);e.cap=Math.max(0,+val('ix')||0)}
-  e.minDays=Math.max(0,Math.floor(+val('imd')||0))}
+  e.minDays=Math.max(0,Math.floor(+val('imd')||0));
+  const f=val('if');if(f==='each'||f==='shared')e.for=f;else if(f==='only'&&!Array.isArray(e.for))e.for=S.people.map(p=>p.id);
+  if(e.for==='shared'&&document.getElementById('ip')&&val('ip'))e.packer=val('ip');else delete e.packer}
 };
 const toggle=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 
@@ -242,27 +286,31 @@ document.addEventListener('click',ev=>{
  stopSug();
  const trip=S.trips.find(t=>t.id===ui.open);
  if(act==='dtag')ui.draft.tags=toggle(ui.draft.tags,v);
- else if(act==='gen'){const d=ui.draft;const t={id:uid(),name:d.name.trim(),days:d.days,tags:[...d.tags],checked:{}};if(d.loc){t.location={...d.loc};t.name=placeLabel(d.loc)}if(!isNaN(ymd(d.start)))t.startDate=d.start;t.list=gen(t);S.trips.unshift(t);ui.open=t.id;ui.draft={name:'',loc:null,days:7,start:'',tags:[]};act_('trip_created')}
+ else if(act==='dpeople'){const n=toggle(tpeople(ui.draft),v);if(n.length)ui.draft.people=n}
+ else if(act==='tpeople'&&ui.tripEdit){const n=toggle(tpeople(ui.tripEdit),v);if(n.length)ui.tripEdit.people=n}
+ else if(act==='gen'){const d=ui.draft;const t={id:uid(),name:d.name.trim(),days:d.days,tags:[...d.tags],people:[...tpeople(d)],checked:{}};if(d.loc){t.location={...d.loc};t.name=placeLabel(d.loc)}if(!isNaN(ymd(d.start)))t.startDate=d.start;t.list=gen(t);S.trips.unshift(t);ui.open=t.id;ui.draft={name:'',loc:null,days:7,start:'',tags:[],people:null};act_('trip_created')}
  else if(act==='open'){ui.open=v;ui.tripEdit=null}
  else if(act==='back'){ui.open=null;ui.tripEdit=null}
  else if(act==='deltrip'){if(!confirm('Delete this trip?'))return;S.trips=S.trips.filter(t=>t.id!==v);act_('trip_deleted')}
- else if(act==='edittrip'&&trip)ui.tripEdit={name:tripName(trip),loc:trip.location?{...trip.location}:null,days:trip.days,start:trip.startDate||'',tags:[...trip.tags]};
+ else if(act==='edittrip'&&trip)ui.tripEdit={name:tripName(trip),loc:trip.location?{...trip.location}:null,days:trip.days,start:trip.startDate||'',tags:[...trip.tags],people:[...tpeople(trip)]};
  else if(act==='ttag'&&ui.tripEdit)ui.tripEdit.tags=toggle(ui.tripEdit.tags,v);
  else if(act==='canceltrip')ui.tripEdit=null;
  else if(act==='savetrip'&&trip&&ui.tripEdit){const e=ui.tripEdit;
-  const upd={...trip,name:e.name.trim(),days:e.days,tags:[...e.tags]};const nl=gen(upd);const keep=new Set(nl.map(x=>x.id));
+  const upd={...trip,name:e.name.trim(),days:e.days,tags:[...e.tags],people:[...tpeople(e)]};const nl=gen(upd);const keep=new Set(nl.map(x=>x.id));
   const gone=trip.list.filter(x=>!keep.has(x.id));
-  if(gone.length&&!confirm('These changes will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nSave anyway?'))return;
-  trip.name=e.loc?placeLabel(e.loc):upd.name;if(e.loc)trip.location={...e.loc};else delete trip.location;trip.days=upd.days;trip.tags=upd.tags;if(!isNaN(ymd(e.start)))trip.startDate=e.start;else delete trip.startDate;trip.list=nl;
+  if(gone.length&&!confirm('These changes will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(lineName).join(', ')+'\n\nSave anyway?'))return;
+  trip.name=e.loc?placeLabel(e.loc):upd.name;if(e.loc)trip.location={...e.loc};else delete trip.location;trip.days=upd.days;trip.tags=upd.tags;if(tpeople(trip).join()!==upd.people.join())act_('trip_people_changed');trip.people=upd.people;if(!isNaN(ymd(e.start)))trip.startDate=e.start;else delete trip.startDate;trip.list=nl;
   Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});ui.tripEdit=null;act_('trip_edited')}
  else if(act==='refresh'&&trip){const nl=gen(trip);const keep=new Set(nl.map(x=>x.id));const gone=trip.list.filter(x=>!keep.has(x.id));
-  if(gone.length&&!confirm('Updating will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nUpdate anyway?'))return;
+  if(gone.length&&!confirm('Updating will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(lineName).join(', ')+'\n\nUpdate anyway?'))return;
   trip.list=nl;Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});act_('list_updated_from_items')}
- else if(act==='copy'&&trip){const txt=tripName(trip)+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
+ else if(act==='copy'&&trip){const one=l=>group(l).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n'),sh=trip.list.filter(x=>x.person===null);
+  const txt=tripName(trip)+' ('+trip.days+' days)\n'+(tpeople(trip).length<2&&!sh.length?one(trip.list):tpeople(trip).map(id=>[pname(id),trip.list.filter(x=>x.person===id)]).concat([['Shared',sh]]).filter(g=>g[1].length).map(g=>'\n== '+g[0]+' =='+one(g[1])).join('\n'));
   try{navigator.clipboard.writeText(txt);b.textContent='Copied'}catch(e){b.textContent='Copy failed'};return}
- else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,minDays:0,tags:[]};
- else if(act==='edit')ui.edit={...S.items.find(i=>i.id===v),tags:[...S.items.find(i=>i.id===v).tags]};
+ else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,minDays:0,tags:[],for:'each'};
+ else if(act==='edit'){const it=S.items.find(i=>i.id===v);ui.edit={...it,tags:[...it.tags],for:Array.isArray(it.for)?[...it.for]:it.for||'each'}}
  else if(act==='etag')ui.edit.tags=v===''?[]:toggle(ui.edit.tags,v);
+ else if(act==='efor'){const n=toggle(ui.edit.for,v);if(n.length)ui.edit.for=n}
  else if(act==='cancel')ui.edit=null;
  else if(act==='saveitem'){const e=ui.edit;if(!e.name.trim()){document.getElementById('in').focus();return}
   e.name=e.name.trim();e.cat=e.cat.trim();const i=S.items.findIndex(x=>x.id===e.id);act_(i>=0?'item_edited':'item_added');i>=0?S.items[i]=e:S.items.push(e);ui.edit=null}
@@ -276,6 +324,23 @@ document.addEventListener('click',ev=>{
   else{if(n!==r.old){const sw=a=>a&&a.map(g=>g===r.old?n:g);
    S.tags=sw(S.tags);S.items.forEach(i=>i.tags=sw(i.tags));S.trips.forEach(t=>t.tags=sw(t.tags));ui.draft.tags=sw(ui.draft.tags);if(ui.tripEdit)ui.tripEdit.tags=sw(ui.tripEdit.tags)}
    ui.rename=null}}
+ else if(act==='rvmark'){S.items.forEach(i=>{if(ui.revSel.includes(i.id)){i.for='shared';delete i.packer}});if(ui.revSel.length)act_('item_edited');ui.revSel=[];S.sharedReview=false}
+ else if(act==='rvskip'){ui.revSel=[];S.sharedReview=false}
+ else if(act==='addperson'){const n=val('np').trim();if(n&&!S.people.some(p=>p.name.trim().toLowerCase()===n.toLowerCase())){S.people.push({id:uid(),name:n});act_('person_added');if(S.people.length===2&&S.sharedReview===undefined){S.sharedReview=true;ui.revSel=[]}}}
+ else if(act==='renperson')ui.prename={old:pname(v),id:v,name:pname(v),err:''};
+ else if(act==='cancelprename')ui.prename=null;
+ else if(act==='saveprename'&&ui.prename){const r=ui.prename,n=r.name.trim();
+  if(!n)r.err='Enter a name for the person.';
+  else if(S.people.some(p=>p.id!==r.id&&p.name.trim().toLowerCase()===n.toLowerCase()))r.err='There is already a person called "'+n+'". Pick a different name.';
+  else{S.people.find(p=>p.id===r.id).name=n;ui.prename=null}}
+ else if(act==='delperson'&&S.people.length>1){const p=S.people.find(x=>x.id===v);if(!p)return;
+  if(!confirm('Remove '+p.name+'? Their lines are removed from all trips (with their ticks), and items only for them will go to everyone.'))return;
+  act_('person_removed');S.people=S.people.filter(x=>x.id!==v);
+  S.items.forEach(i=>{if(Array.isArray(i.for)){i.for=i.for.filter(x=>x!==v);if(!i.for.length)i.for='each'}if(i.packer===v)delete i.packer});
+  S.trips.forEach(t=>{if(!t.people.includes(v))return;t.people=t.people.filter(x=>x!==v);
+   if(t.people.length){t.list=t.list.filter(x=>x.person!==v)}else{t.people=[S.people[0].id];t.list=gen(t)}
+   const k=new Set(t.list.map(x=>x.id));Object.keys(t.checked).forEach(c=>{if(!k.has(c))delete t.checked[c]})});
+  ui.draft.people=ui.draft.people&&ui.draft.people.filter(x=>x!==v);if(ui.draft.people&&!ui.draft.people.length)ui.draft.people=null}
  else if(act==='deltag'){if(!confirm('Remove trip type "'+v+'"? Items limited to it will then go on every trip.'))return;
   act_('trip_type_removed');S.tags=S.tags.filter(g=>g!==v);S.items.forEach(i=>i.tags=i.tags.filter(g=>g!==v));ui.draft.tags=ui.draft.tags.filter(g=>g!==v)}
  save();render();
@@ -288,7 +353,8 @@ document.addEventListener('input',ev=>{
 document.addEventListener('change',ev=>{
  const t=ev.target;
  if(t.dataset.act==='chk'){const trip=S.trips.find(x=>x.id===ui.open);trip.checked[t.dataset.v]=t.checked;save();render()}
- else if(t.id==='im'){grab();render()}
+ else if(t.dataset.act==='rvchk'){ui.revSel=toggle(ui.revSel,t.dataset.v)}
+ else if(t.id==='im'||t.id==='if'){grab();render()}
  else if(t.id==='td'){grab();render()}
 });
 document.getElementById('app').innerHTML='<p class="hint">Loading…</p>';

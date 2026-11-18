@@ -208,8 +208,8 @@ test('renaming a trip type updates items and trips', async ({ page, api }) => {
   expect(d.tags).toEqual(['Sea side', 'City']);
   expect(d.items.find((i) => i.id === 'swim').tags).toEqual(['Sea side']);
   expect(d.trips[0].tags).toEqual(['Sea side']);
-  expect(d.trips[0].list.map((x) => x.id)).toEqual(['swim']);
-  expect(d.trips[0].checked).toEqual({ swim: true });
+  expect(d.trips[0].list.map((x) => x.id)).toEqual(['swim@me']);
+  expect(d.trips[0].checked).toEqual({ 'swim@me': true });
 });
 
 test('renaming to a used name is refused', async ({ page, api }) => {
