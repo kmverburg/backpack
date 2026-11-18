@@ -75,3 +75,45 @@ test('refuses /api/log without the login header', async ({ baseURL }) => {
   const r = await fetch(baseURL + '/api/log', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"actions":["trip_created"]}' });
   expect(r.status).toBe(403);
 });
+
+// Places search (Photon is replaced by tests/photon-mock.js)
+const hitsOf = async (q) => (await (await fetch('http://localhost:8789/__hits?q=' + q)).json()).hits;
+
+test('places: refuses without the login header', async ({ baseURL }) => {
+  expect((await fetch(baseURL + '/api/places?q=lisbon')).status).toBe(403);
+});
+
+test('places: returns cities and countries with country, drops other types', async ({ request }) => {
+  const r = await request.get('/api/places?q=Valencia', { headers: H });
+  expect(r.status()).toBe(200);
+  expect((await r.json()).places).toEqual([
+    { name: 'Valencia', country: 'Spain', countryCode: 'ES', lat: 39.4699, lon: -0.3763 },
+    { name: 'Valencia', country: 'Venezuela', countryCode: 'VE', lat: 10.162, lon: -68 },
+  ]);
+  const c = await (await request.get('/api/places?q=spain', { headers: H })).json();
+  expect(c.places).toEqual([{ name: 'Spain', country: 'Spain', countryCode: 'ES', lat: 40.2, lon: -3.6 }]);
+});
+
+test('places: short queries return nothing without searching', async ({ request }) => {
+  expect((await (await request.get('/api/places?q=a', { headers: H })).json()).places).toEqual([]);
+  expect(await hitsOf('a')).toBe(0);
+});
+
+test('places: caches results and sends a user agent', async ({ request }) => {
+  const url = '/api/places?q=Lisbon';
+  const a = await (await request.get(url, { headers: H })).json();
+  await new Promise((r) => setTimeout(r, 300)); // cache write finishes after the response
+  const b = await (await request.get('/api/places?q=lisbon', { headers: H })).json();
+  expect(b).toEqual(a);
+  expect(a.places[0].name).toBe('Lisbon');
+  expect(await hitsOf('lisbon')).toBe(1); // the mock refuses calls without a Backpack user agent
+});
+
+test('places: a failing search service gives 502 and is not cached', async ({ request }) => {
+  const before = await hitsOf('boom');
+  expect((await request.get('/api/places?q=boom', { headers: H })).status()).toBe(502);
+  expect((await request.get('/api/places?q=boom', { headers: H })).status()).toBe(502);
+  expect(await hitsOf('boom')).toBe(before + 2);
+  expect((await request.get('/api/places?q=junk', { headers: H })).status()).toBe(502);
+  await waitLog((o) => o.route === '/api/places' && o.level === 'error' && o.status === 502);
+});

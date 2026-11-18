@@ -30,15 +30,51 @@ async function clientLog(req, route) {
   return json({ ok: true });
 }
 
+// GET /api/places?q=: city/country suggestions from Photon (OpenStreetMap), so the phone only talks to Backpack.
+// Results are cached per query (Photon asks for fair use). PHOTON_URL is only set for tests.
+const PHOTON='https://photon.komoot.io/api/';
+const UA='Backpack/1.0 (+https://backpack.kmverburg.nl)';
+const PLACE_TYPES=new Set(['city','state','country']);
+async function places(req, env, url, ctx) {
+  if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
+  const reply = (list, cc) => new Response(JSON.stringify({ places: list }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': cc } });
+  if ([...q].length < 2) return reply([], 'no-store');
+  const base = env.PHOTON_URL || PHOTON;
+  const key = new Request('https://places.backpack.invalid/?q=' + encodeURIComponent(q.toLowerCase()));
+  const hit = await caches.default.match(key);
+  if (hit) return hit;
+  let data;
+  try {
+    const r = await fetch(base + '?limit=8&lang=en&q=' + encodeURIComponent(q), { headers: { 'User-Agent': UA, Accept: 'application/json' } });
+    if (!r.ok) throw new Error('photon status ' + r.status);
+    data = await r.json();
+  } catch (e) {
+    log('error', 'places search failed: ' + String(e && e.message || e), '/api/places', 502, { stack: e && e.stack });
+    return json({ error: 'search unavailable' }, 502);
+  }
+  const seen = new Set(), list = [];
+  for (const f of (data && Array.isArray(data.features) ? data.features : [])) {
+    const p = f && f.properties || {}, c = f && f.geometry && f.geometry.coordinates || [];
+    if (!PLACE_TYPES.has(p.type) || typeof p.name !== 'string' || typeof p.country !== 'string' || !isFinite(c[0]) || !isFinite(c[1])) continue;
+    const place = { name: p.name.slice(0, 100), country: p.country.slice(0, 100), countryCode: String(p.countrycode || '').toUpperCase().slice(0, 2), lat: +c[1], lon: +c[0] };
+    const k = place.name + '|' + place.country + '|' + p.type + '|' + (p.state || '');
+    if (!seen.has(k)) { seen.add(k); list.push(place); }
+  }
+  const res = reply(list, 'public, max-age=86400');
+  ctx.waitUntil(caches.default.put(key, res.clone()));
+  return res;
+}
+
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const route = url.pathname;
     if (!route.startsWith('/api/')) return env.ASSETS.fetch(req);
     const t0 = Date.now();
     let res;
     try {
-      res = await handle(req, env, route);
+      res = await handle(req, env, route, ctx);
       if (res.status >= 500) log('error', 'server error response', route, res.status);
     } catch (e) {
       log('error', String(e && e.message || e), route, 500, { stack: e && e.stack });
@@ -49,11 +85,12 @@ export default {
   }
 };
 
-async function handle(req, env, route) {
+async function handle(req, env, route, ctx) {
   {
     // Cloudflare Access adds this header after login. Without it, refuse.
     if (!req.headers.get('Cf-Access-Jwt-Assertion')) { log('info', 'missing login header', route, 403); return new Response('Forbidden', { status: 403 }); }
     if (route === '/api/log' || route === '/api/client-error') return clientLog(req, route);
+    if (route === '/api/places') return places(req, env, new URL(req.url), ctx);
     if (route !== '/api/state') return json({ error: 'not found' }, 404);
 
     const raw = await env.BACKPACK.get('state');

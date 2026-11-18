@@ -40,6 +40,9 @@ input[type=text],input[type=number],input[type=date],select{display:block;width:
 .btn.sm{padding:6px 11px;font-size:13px}
 .hint{color:var(--mute);font-size:14px}
 .sentence{margin:0 0 16px;padding:10px 14px;border-left:4px solid var(--sun);background:var(--bg);border-radius:0 9px 9px 0;font-size:15px}
+.sug{list-style:none;margin:-8px 0 12px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.sug button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:inherit;padding:8px 10px;border-radius:7px;cursor:pointer}
+.sug button:hover,.sug button:focus-visible{background:var(--bg)}
 .trip{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line)}
 .trip:first-of-type{border-top:0}
 summary{cursor:pointer;font-weight:600;padding:10px 0;border-top:1px solid var(--line)}
@@ -111,7 +114,7 @@ async function push(){
  catch(e){dirty=false;setStatus('Cannot reach the server. Changes are not saved.')}
 }
 const save=()=>{dirty=true;clearTimeout(timer);timer=setTimeout(push,300)};
-const ui={tab:'trips',open:null,draft:{name:'',days:7,start:'',tags:[]},pastOpen:false,edit:null,tripEdit:null,rename:null};
+const ui={tab:'trips',open:null,draft:{name:'',loc:null,days:7,start:'',tags:[]},pastOpen:false,edit:null,tripEdit:null,rename:null};
 const qtyFor=(it,d)=>{let q=it.mode==='fixed'?it.qty:it.qty*Math.ceil(d/Math.max(1,it.every));return it.mode==='per'&&it.cap>0?Math.min(q,it.cap):q};
 const describe=it=>{
  let r=it.mode==='fixed'?`${it.qty} per trip`:`${it.qty} per ${it.every>1?it.every+' days':'day'}${it.cap>0?`, max ${it.cap}`:''}`;
@@ -127,20 +130,38 @@ const gen=t=>S.items.filter(it=>(!it.tags.length||it.tags.some(g=>t.tags.include
  .map(it=>({id:it.id,name:it.name,cat:it.cat||'Other',qty:qtyFor(it,t.days)}));
 const group=list=>{const m={};list.forEach(x=>(m[x.cat]=m[x.cat]||[]).push(x));return Object.entries(m)};
 
+// Place suggestions (via the Worker): wait 300 ms after typing, never more than one request per second.
+const placeLabel=p=>p.name===p.country?p.name:p.name+', '+p.country;
+const tripName=t=>t.location?placeLabel(t.location):t.name||'Untitled trip';
+const sug={id:'',q:'',list:[],t:0,last:0,cache:new Map()};
+const sugHtml=id=>sug.id===id&&sug.list.length?`<ul class="sug" role="listbox" aria-label="Suggestions">${sug.list.map((p,i)=>`<li role="option"><button type="button" data-act="pick" data-v="${i}">${esc(placeLabel(p))}</button></li>`).join('')}</ul>`:'';
+const paintSug=()=>{const e=document.getElementById('sgbox');if(e)e.innerHTML=sugHtml(sug.id)};
+const stopSug=()=>{clearTimeout(sug.t);sug.q='';sug.list=[]};
+async function runSug(id,q){
+ sug.last=Date.now();let l=[];
+ try{const r=await fetch('/api/places?q='+encodeURIComponent(q));if(r.ok){const j=await r.json();l=Array.isArray(j.places)?j.places:[];sug.cache.set(q.toLowerCase(),l)}}catch{}
+ if(sug.q===q&&sug.id===id){sug.list=l;paintSug()}
+}
+function suggest(id,text){
+ clearTimeout(sug.t);const q=text.trim();sug.id=id;sug.q=q;sug.list=[];
+ if([...q].length>=2){const hit=sug.cache.get(q.toLowerCase());
+  if(hit)sug.list=hit;else sug.t=setTimeout(()=>runSug(id,q),Math.max(300,sug.last+1000-Date.now()))}
+ paintSug();
+}
 const DAY=864e5,ymd=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')?Date.parse(s+'T00:00:00Z'):NaN;
 const endOf=t=>ymd(t.startDate)+(Math.max(1,t.days)-1)*DAY;
 const todayUtc=()=>{const n=new Date();return Date.UTC(n.getFullYear(),n.getMonth(),n.getDate())};
 const range=t=>{const a=ymd(t.startDate);if(isNaN(a))return '';const f=new Intl.DateTimeFormat(undefined,{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
  return f.formatRange(a,endOf(t))};
 const tripRow=t=>{const n=t.list.length,c=t.list.filter(x=>t.checked[x.id]).length,rg=range(t);
- return `<div class="trip"><div><b>${esc(t.name||'Untitled trip')}</b>${rg?`<div class="hint trip-date">${esc(rg)}</div>`:''}<div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c}/${n} packed</div></div>
+ return `<div class="trip"><div><b>${esc(tripName(t))}</b>${rg?`<div class="hint trip-date">${esc(rg)}</div>`:''}<div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c}/${n} packed</div></div>
  <div class="acts"><button class="btn sm" data-act="open" data-v="${t.id}">Open</button><button class="btn sm ghost x" data-act="deltrip" data-v="${t.id}" aria-label="Delete trip">Delete</button></div></div>`};
 function tripsView(){
  if(ui.open){const t=S.trips.find(x=>x.id===ui.open);if(t)return listView(t);ui.open=null}
  const d=ui.draft;
  const preview=gen(d).length;
  return `<section class="panel"><h2>Plan a trip</h2>
- <div class="row"><label class="f">Trip name<input type="text" id="tn" value="${esc(d.name)}" placeholder="Lisbon, June"></label>
+ <div class="row"><label class="f" style="flex-basis:100%">Location<input type="text" id="tn" value="${esc(d.name)}" placeholder="Lisbon" autocomplete="off"></label><div id="sgbox" style="flex-basis:100%">${sugHtml('tn')}</div>
  <label class="f">Days<input type="number" id="td" min="1" max="365" value="${d.days}"></label>
  <label class="f">Start date (optional)<input type="date" id="ts" value="${esc(d.start)}"></label></div>
  <div class="f" style="margin-bottom:0">What kind of trip?</div>
@@ -153,7 +174,7 @@ function tripsView(){
 function tripForm(){
  const e=ui.tripEdit;if(!e)return '';
  return `<section class="panel"><h2>Edit trip</h2>
- <div class="row"><label class="f">Trip name<input type="text" id="en" value="${esc(e.name)}" placeholder="Lisbon, June"></label>
+ <div class="row"><label class="f" style="flex-basis:100%">Location<input type="text" id="en" value="${esc(e.name)}" placeholder="Lisbon" autocomplete="off"></label><div id="sgbox" style="flex-basis:100%">${sugHtml('en')}</div>
  <label class="f">Days<input type="number" id="ed" min="1" max="365" value="${e.days}"></label>
  <label class="f">Start date (optional)<input type="date" id="es" value="${esc(e.start)}"></label></div>
  <div class="f" style="margin-bottom:0">What kind of trip?</div>
@@ -165,7 +186,7 @@ function listView(t){
  const n=t.list.length,c=t.list.filter(x=>t.checked[x.id]).length;
  return `<div class="top"><button class="btn sm ghost" data-act="back">Back</button>
  <div><button class="btn sm ghost" data-act="edittrip">Edit trip</button> <button class="btn sm ghost" data-act="refresh">Update from items</button> <button class="btn sm ghost" data-act="copy">Copy list</button></div></div>
- ${tripForm()}<section class="panel"><h2>${esc(t.name||'Untitled trip')}</h2>${range(t)?`<p class="hint trip-date" style="margin-top:-6px">${esc(range(t))}</p>`:''}
+ ${tripForm()}<section class="panel"><h2>${esc(tripName(t))}</h2>${range(t)?`<p class="hint trip-date" style="margin-top:-6px">${esc(range(t))}</p>`:''}
  <div class="hint">${t.days} days${t.tags.length?' · '+esc(t.tags.join(', ')):''} · ${c} of ${n} packed</div>
  <div class="bar"><i style="width:${n?c/n*100:0}%"></i></div>
  ${group(t.list).map(([cat,xs])=>`<div class="cat"><h3>${esc(cat)}</h3>${xs.map(x=>`<label class="li ${t.checked[x.id]?'done':''}"><input type="checkbox" data-act="chk" data-v="${x.id}" ${t.checked[x.id]?'checked':''}><span>${esc(x.name)}</span><b class="q">${x.qty}×</b></label>`).join('')}</div>`).join('')||'<p class="hint">Nothing matches this trip.</p>'}
@@ -214,28 +235,30 @@ const toggle=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 
 document.addEventListener('click',ev=>{
  const tb=ev.target.closest('[data-tab]');
- if(tb){grab();ui.tab=tb.dataset.tab;ui.open=null;ui.tripEdit=null;return render()}
+ if(tb){grab();stopSug();ui.tab=tb.dataset.tab;ui.open=null;ui.tripEdit=null;return render()}
  const b=ev.target.closest('[data-act]');if(!b||b.type==='checkbox')return;
  const act=b.dataset.act,v=b.dataset.v;grab();
+ if(act==='pick'){const p=sug.list[+v],o=sug.id==='tn'?ui.draft:ui.tripEdit;if(p&&o){o.loc={...p};o.name=placeLabel(p)}stopSug();return render()}
+ stopSug();
  const trip=S.trips.find(t=>t.id===ui.open);
  if(act==='dtag')ui.draft.tags=toggle(ui.draft.tags,v);
- else if(act==='gen'){const d=ui.draft;const t={id:uid(),name:d.name.trim(),days:d.days,tags:[...d.tags],checked:{}};if(!isNaN(ymd(d.start)))t.startDate=d.start;t.list=gen(t);S.trips.unshift(t);ui.open=t.id;ui.draft={name:'',days:7,start:'',tags:[]};act_('trip_created')}
+ else if(act==='gen'){const d=ui.draft;const t={id:uid(),name:d.name.trim(),days:d.days,tags:[...d.tags],checked:{}};if(d.loc){t.location={...d.loc};t.name=placeLabel(d.loc)}if(!isNaN(ymd(d.start)))t.startDate=d.start;t.list=gen(t);S.trips.unshift(t);ui.open=t.id;ui.draft={name:'',loc:null,days:7,start:'',tags:[]};act_('trip_created')}
  else if(act==='open'){ui.open=v;ui.tripEdit=null}
  else if(act==='back'){ui.open=null;ui.tripEdit=null}
  else if(act==='deltrip'){if(!confirm('Delete this trip?'))return;S.trips=S.trips.filter(t=>t.id!==v);act_('trip_deleted')}
- else if(act==='edittrip'&&trip)ui.tripEdit={name:trip.name,days:trip.days,start:trip.startDate||'',tags:[...trip.tags]};
+ else if(act==='edittrip'&&trip)ui.tripEdit={name:tripName(trip),loc:trip.location?{...trip.location}:null,days:trip.days,start:trip.startDate||'',tags:[...trip.tags]};
  else if(act==='ttag'&&ui.tripEdit)ui.tripEdit.tags=toggle(ui.tripEdit.tags,v);
  else if(act==='canceltrip')ui.tripEdit=null;
  else if(act==='savetrip'&&trip&&ui.tripEdit){const e=ui.tripEdit;
   const upd={...trip,name:e.name.trim(),days:e.days,tags:[...e.tags]};const nl=gen(upd);const keep=new Set(nl.map(x=>x.id));
   const gone=trip.list.filter(x=>!keep.has(x.id));
   if(gone.length&&!confirm('These changes will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nSave anyway?'))return;
-  trip.name=upd.name;trip.days=upd.days;trip.tags=upd.tags;if(!isNaN(ymd(e.start)))trip.startDate=e.start;else delete trip.startDate;trip.list=nl;
+  trip.name=e.loc?placeLabel(e.loc):upd.name;if(e.loc)trip.location={...e.loc};else delete trip.location;trip.days=upd.days;trip.tags=upd.tags;if(!isNaN(ymd(e.start)))trip.startDate=e.start;else delete trip.startDate;trip.list=nl;
   Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});ui.tripEdit=null;act_('trip_edited')}
  else if(act==='refresh'&&trip){const nl=gen(trip);const keep=new Set(nl.map(x=>x.id));const gone=trip.list.filter(x=>!keep.has(x.id));
   if(gone.length&&!confirm('Updating will remove '+gone.length+' item'+(gone.length>1?'s':'')+' from the list:\n\n'+gone.map(x=>x.name).join(', ')+'\n\nUpdate anyway?'))return;
   trip.list=nl;Object.keys(trip.checked).forEach(k=>{if(!keep.has(k))delete trip.checked[k]});act_('list_updated_from_items')}
- else if(act==='copy'&&trip){const txt=trip.name+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
+ else if(act==='copy'&&trip){const txt=tripName(trip)+' ('+trip.days+' days)\n'+group(trip.list).map(([c,xs])=>'\n'+c+'\n'+xs.map(x=>(trip.checked[x.id]?'[x] ':'[ ] ')+x.qty+'× '+x.name).join('\n')).join('\n');
   try{navigator.clipboard.writeText(txt);b.textContent='Copied'}catch(e){b.textContent='Copy failed'};return}
  else if(act==='new')ui.edit={id:uid(),name:'',cat:'',mode:'fixed',qty:1,every:1,cap:0,minDays:0,tags:[]};
  else if(act==='edit')ui.edit={...S.items.find(i=>i.id===v),tags:[...S.items.find(i=>i.id===v).tags]};
@@ -259,6 +282,7 @@ document.addEventListener('click',ev=>{
 });
 document.addEventListener('toggle',ev=>{if(ev.target.id==='pastg')ui.pastOpen=ev.target.open},true);
 document.addEventListener('input',ev=>{
+ if(ev.target.id==='tn'||ev.target.id==='en'){grab();(ev.target.id==='tn'?ui.draft:ui.tripEdit).loc=null;suggest(ev.target.id,ev.target.value)}
  if(['iq','ie','ix'].includes(ev.target.id)){grab();const s=document.getElementById('isent');if(s)s.innerHTML=sentence(ui.edit)}
 });
 document.addEventListener('change',ev=>{

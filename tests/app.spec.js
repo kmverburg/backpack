@@ -311,3 +311,116 @@ test('no Past trips group when no trip is past', async ({ page, api }) => {
   await page.goto('/');
   await expect(page.locator('details#pastg')).toHaveCount(0);
 });
+
+// Locations
+const sugs = (page) => page.locator('.sug button');
+
+test('picking a suggestion stores the place on the trip', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await expect(page.getByLabel('Location')).toBeVisible();
+  await page.locator('#tn').fill('Valencia');
+  await expect(sugs(page)).toHaveText(['Valencia, Spain', 'Valencia, Venezuela']);
+  await sugs(page).nth(1).click();
+  await expect(page.locator('#tn')).toHaveValue('Valencia, Venezuela');
+  await expect(sugs(page)).toHaveCount(0);
+  await page.getByRole('button', { name: /Make packlist/ }).click();
+  await expect(page.locator('h2', { hasText: 'Valencia, Venezuela' })).toBeVisible();
+  await settle(page);
+  const t = (await api.get()).data.trips[0];
+  expect(t.name).toBe('Valencia, Venezuela');
+  expect(t.location).toEqual({ name: 'Valencia', country: 'Venezuela', countryCode: 'VE', lat: 10.162, lon: -68 });
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.locator('.trip b')).toHaveText('Valencia, Venezuela');
+});
+
+test('a country is shown by its name only', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await page.locator('#tn').fill('spain');
+  await expect(sugs(page)).toHaveText(['Spain']);
+});
+
+test('free text without choosing is allowed and has no location', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await page.locator('#tn').fill('Valencia');
+  await expect(sugs(page)).toHaveCount(2);
+  await page.locator('#tn').fill('Grandma\'s cabin');
+  await page.getByRole('button', { name: /Make packlist/ }).click();
+  await settle(page);
+  const t = (await api.get()).data.trips[0];
+  expect(t.name).toBe('Grandma\'s cabin');
+  expect(t.location).toBeUndefined();
+});
+
+test('editing text after choosing drops the place; editing can pick a new one', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await page.locator('#tn').fill('Lisbon');
+  await sugs(page).first().click();
+  await page.locator('#tn').fill('Lisbon, June');
+  await page.getByRole('button', { name: /Make packlist/ }).click();
+  await settle(page);
+  expect((await api.get()).data.trips[0].location).toBeUndefined();
+  await page.getByRole('button', { name: 'Edit trip' }).click();
+  await page.locator('#en').fill('Valencia');
+  await sugs(page).first().click();
+  await page.getByRole('button', { name: 'Save trip' }).click();
+  await settle(page);
+  const t = (await api.get()).data.trips[0];
+  expect(t.name).toBe('Valencia, Spain');
+  expect(t.location.countryCode).toBe('ES');
+});
+
+test('old trips keep their name as location text without coordinates', async ({ page, api }) => {
+  await api.put({ ...base(), trips: [mk('a', 'Old trip', '2027-07-12')] });
+  await page.goto('/');
+  await expect(page.locator('.trip b')).toHaveText('Old trip');
+  await expect(page.locator('.trip-date')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Open' }).click();
+  await page.getByRole('button', { name: 'Edit trip' }).click();
+  await expect(page.locator('#en')).toHaveValue('Old trip');
+  await page.getByRole('button', { name: 'Save trip' }).click();
+  await settle(page);
+  const t = (await api.get()).data.trips[0];
+  expect(t.name).toBe('Old trip');
+  expect(t.location).toBeUndefined();
+});
+
+test('trip with a location shows it with the country and the start date', async ({ page, api }) => {
+  const loc = { name: 'Lisbon', country: 'Portugal', countryCode: 'PT', lat: 38.7, lon: -9.1 };
+  await api.put({ ...base(), trips: [{ ...mk('a', 'Lisbon, Portugal', '2027-07-12'), location: loc }] });
+  await page.goto('/');
+  await expect(page.locator('.trip b')).toHaveText('Lisbon, Portugal');
+  await expect(page.locator('.trip-date')).toHaveCount(1);
+});
+
+test('typing waits 300 ms and sends at most one search per second', async ({ page, api }) => {
+  await api.put(base());
+  const times = [];
+  await page.route('**/api/places*', (r) => { times.push(Date.now()); r.continue(); });
+  await page.goto('/');
+  const box = page.locator('#tn');
+  await box.pressSequentially('Val', { delay: 50 }); // one burst of typing
+  await page.waitForTimeout(150);
+  expect(times).toHaveLength(0); // still waiting
+  await expect.poll(() => times.length).toBe(1);
+  await box.pressSequentially('encia');
+  await page.waitForTimeout(500);
+  await box.pressSequentially('x'); // type again right after the second search is due
+  await expect.poll(() => times.length, { timeout: 5000 }).toBe(2);
+  expect(times[1] - times[0]).toBeGreaterThanOrEqual(950);
+  await page.waitForTimeout(1500);
+  expect(times).toHaveLength(2);
+});
+
+test('a failing search leaves free typing working', async ({ page, api }) => {
+  await api.put(base());
+  await page.goto('/');
+  await page.locator('#tn').fill('boom town');
+  await page.waitForTimeout(800);
+  await expect(sugs(page)).toHaveCount(0);
+  await page.getByRole('button', { name: /Make packlist/ }).click();
+  await expect(page.locator('h2', { hasText: 'boom town' })).toBeVisible();
+});
