@@ -1,0 +1,113 @@
+name: Preview Backpack PR
+
+# Every PR gets its own Worker (backpack-pr-<n>) with its own empty KV namespace on
+# https://backpack-pr-<n>.kmverburg.nl. It is removed again when the PR closes.
+# The hostname must sit behind a Cloudflare Access app (see CLAUDE.md, "Previews");
+# the deploy step checks that and tears the preview down if it is not protected.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  NAME: backpack-pr-${{ github.event.pull_request.number }}
+  HOST: backpack-pr-${{ github.event.pull_request.number }}.kmverburg.nl
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  deploy:
+    # Fork PRs get no secrets, so they get no preview.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Find or create the preview's own KV namespace
+        run: |
+          id=$(npx --yes wrangler@4 kv namespace list | jq -r --arg t "$NAME" '[.[] | select(.title == $t)][0].id // empty')
+          if [ -z "$id" ]; then
+            npx --yes wrangler@4 kv namespace create "$NAME" >/dev/null
+            id=$(npx --yes wrangler@4 kv namespace list | jq -r --arg t "$NAME" '[.[] | select(.title == $t)][0].id // empty')
+          fi
+          [ -n "$id" ] || { echo "Could not find or create KV namespace $NAME"; exit 1; }
+          echo "KV_ID=$id" >> "$GITHUB_ENV"
+      - name: Write preview config
+        run: |
+          cat > "$RUNNER_TEMP/wrangler.preview.toml" <<TOML
+          name = "$NAME"
+          main = "$GITHUB_WORKSPACE/src/worker.js"
+          compatibility_date = "2025-01-01"
+          workers_dev = false
+          preview_urls = false
+          routes = [{ pattern = "$HOST", custom_domain = true }]
+
+          [assets]
+          directory = "$GITHUB_WORKSPACE/public"
+          binding = "ASSETS"
+
+          [[kv_namespaces]]
+          binding = "BACKPACK"
+          id = "$KV_ID"
+
+          [observability]
+          enabled = true
+          TOML
+      - name: Deploy preview
+        run: npx --yes wrangler@4 deploy --config "$RUNNER_TEMP/wrangler.preview.toml"
+      - name: Verify the preview is behind Cloudflare Access
+        run: |
+          # Without a login, Access answers with a redirect to cloudflareaccess.com
+          # (or 401/403 from Access). If the Worker itself answers, it is open.
+          ok=0
+          for i in $(seq 1 12); do
+            out=$(curl -s -o /dev/null -D - --max-time 15 "https://$HOST/" || true)
+            if echo "$out" | grep -qi 'cloudflareaccess.com'; then ok=1; break; fi
+            sleep 10
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::https://$HOST is not protected by Cloudflare Access. Removing the preview. See 'Previews' in CLAUDE.md for the Access setup."
+            npx --yes wrangler@4 delete --name "$NAME" --force || true
+            exit 1
+          fi
+      - name: Report the preview URL
+        run: |
+          url="https://$HOST"
+          echo "Preview: $url (Cloudflare Access login required, empty separate storage)" >> "$GITHUB_STEP_SUMMARY"
+          body="<!-- backpack-preview -->
+          **Preview:** $url
+          Behind Cloudflare Access, with its own empty storage (starts with the example items). Updated on every push, removed when the PR closes."
+          pr=${{ github.event.pull_request.number }}
+          cid=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate --jq '[.[] | select(.body | startswith("<!-- backpack-preview -->"))][0].id // empty')
+          if [ -n "$cid" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$cid" -f body="$body" >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="$body" >/dev/null
+          fi
+
+  cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Delete the preview Worker and its KV namespace
+        run: |
+          npx --yes wrangler@4 delete --name "$NAME" --force || true
+          id=$(npx --yes wrangler@4 kv namespace list | jq -r --arg t "$NAME" '[.[] | select(.title == $t)][0].id // empty')
+          if [ -n "$id" ]; then
+            npx --yes wrangler@4 kv namespace delete --namespace-id "$id" --skip-confirmation || true
+          fi
+          echo "Preview $NAME removed" >> "$GITHUB_STEP_SUMMARY"

@@ -53,6 +53,11 @@ Saved state from older versions must keep loading. When adding fields, handle th
   - Client errors: `level: error` with `source: "client"` (see above).
 - In tests, `wrangler dev` output goes to a file (`BACKPACK_TEST_LOG`); use `waitLog()` / `logs()` from `tests/helpers.js` to assert on log lines.
 
+## Previews
+- Every same-repo PR gets a preview via `.github/workflows/preview.yml`: its own Worker `backpack-pr-<n>` at `https://backpack-pr-<n>.kmverburg.nl`, with its own empty KV namespace `backpack-pr-<n>` (never the production one). It starts with the `seed()` example items.
+- Find the URL in the PR comment starting with "Preview:" (also in the workflow run summary). It updates on each push and is deleted (Worker and KV) when the PR closes.
+- It needs a Cloudflare Access app on `backpack-pr-*.kmverburg.nl` (same policy as production). The workflow checks that the host redirects to cloudflareaccess.com and otherwise deletes the preview and fails, so a preview is never left open. Like production, open it with the login; the Worker only checks that the `Cf-Access-Jwt-Assertion` header exists.
+
 ## Off-limits
 - `wrangler.toml` (routes, `workers_dev = false`, KV id) and the Access header check in `src/worker.js`.
 - `mobile/` and `.github/`.
